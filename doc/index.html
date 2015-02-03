@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta content="text/html; charset=windows-1252" http-equiv="content-type">
+    <title>vcio2 - Kernel driver to access Raspberry Pi VideoCore IV GPU without
+      root privileges</title>
+    <meta content="Marcel M&uuml;ller" name="author">
+    <meta content="Raspberry Pi BCM2835 BCM2708 QPU DKMS vcio" name="keywords">
+    <link rel="stylesheet" href="infstyle.css" type="text/css">
+  </head>
+  <body>
+    <h1>vcio2 - Kernel driver to access Raspberry Pi VideoCore IV GPU without
+      root privileges</h1>
+    <p class="abstract">When using Raspberry Pi's GPU from user space (e.g. <a
+        href="http://www.raspberrypi.org/accelerating-fourier-transforms-using-the-gpu/">gpu_fft</a>)
+      with the built vcio driver in the RPi kernel you need to have root
+      privileges for every application.<br>
+      The goal of the vcio2 driver is to come around this restriction.
+      Furthermore vcio2 keeps track of the resources and performs a clean-up if
+      the application is interrupted.</p>
+    <p><a class="nobr" href="#features">&#9660; Features</a>, <a class="nobr" href="#bugs">&#9660;
+        Limitations &amp; problems</a> <a class="nobr" href="#install">&#9660;
+        Installation instructions</a>, <a class="nobr" href="#usage">&#9660; Using
+        the driver</a>, <a class="nobr" href="guide.html#sample">&#9654; Sample code</a>,
+      <a class="nobr" href="guide.html">&#9654; Programming guide</a>, <a class="nobr"
+        href="APIref.html">&#9654; API reference</a>, <a class="nobr" href="#contact">&#9660;
+        Contact</a></p>
+    <h2><a id="download" name="download"></a>Download &amp; history</h2>
+    <p>Download <a href="../vcio2.tar.bz2">DKMS kernel module, an example and
+        this documentation</a></p>
+    <dl>
+      <dt>V0.1</dt>
+      <dd>First public release.</dd>
+    </dl>
+    <h2><a id="features" name="features"></a>Features</h2>
+    <ul>
+      <li><b>No root</b> privilege <b>required</b> to use the GPU.</li>
+      <li><b>Automatic cleanup of resources</b> like GPU memory on application
+        termination, e.g. crash or <tt>SIGBREAK</tt>.</li>
+      <li><b>Share the GPU</b> by multiple applications.</li>
+      <li>Enable and disable the GPU automatically.</li>
+      <li>Some protection against invalid memory access.</li>
+    </ul>
+    <h2><a id="install" name="vc4asm"></a>Installation instructions</h2>
+    <h3>Prerequisites</h3>
+    <ul>
+      <li>Install <tt>dkms</tt> package if not yet done.</li>
+      <li>Install <tt>linux-kernel-headers</tt>.</li>
+      <li>In fact I only tested with kernel <tt>3.16.0-4-rpi</tt> so far but it
+        is likely to work with other kernels too.</li>
+    </ul>
+    <h3>Build and install the driver</h3>
+    <ul>
+      <li>Unpack the <a href="#download">package</a> above to some folder.</li>
+      <li>Open a shell.</li>
+      <li>Go to the folder where the files are extracted. (Not to sub folder <tt>src</tt>)</li>
+      <li><tt>sudo make install</tt></li>
+    </ul>
+    <p>Normally this should build the kernel module using DKMS, install it for
+      the currently running kernel, setup the driver for autostart and load the
+      driver. So you are ready to use immediately.</p>
+    <p>If it does not work, have a look at the error messages on the screen as
+      well as <tt>/var/dkms/vcio2/0.1/build/make.log</tt> and <tt>/val/log/syslog</tt>.</p>
+    <h3>Remove the driver</h3>
+    <ul>
+      <li>Open a shell.</li>
+      <li>Go to the folder where the files are extracted. (Not to sub folder <tt>src</tt>)
+      </li>
+      <li><tt>sudo make remove</tt></li>
+    </ul>
+    <p>This will unload the kernel module and uninstall it.</p>
+    <h2><a id="usage" name="vc4dis"></a>Using the driver</h2>
+    <p>As soon as the driver is loaded successfully, two new devices appear in
+      the <tt>/dev</tt> directory.</p>
+    <dl>
+      <dt><tt>/dev/vcio</tt></dt>
+      <dd>This is a device compatible to the one used by <tt>hello_fft</tt>.
+        You can use a symbolic link to this device for the <tt>char_dev</tt>
+        required by <tt>hello_fft</tt> instead of creating a character device
+        with <tt>mknod</tt>. This enables you to run <tt>hello_fft</tt> from a
+        remote file system.<br>
+        <em>Using this device does not offer the features of vcio2.</em></dd>
+      <dt><tt>/dev/vcio2</tt></dt>
+      <dd>This is the new device which offers new <a href="#featuresvcio2%20User%20space%20API">features</a>.
+        Using this device requires changes to the source code of the
+        application. See the <a href="APIref.html">API reference</a> and
+        especially the migration guide.<br>
+        You might want to grant access to this device to some group to prevent
+        the need of root privileges to use the GPU. I.e. <tt>chmod 660</tt> and
+        <tt>chgrp</tt>. You might also set up a <i>udev rule</i> to set this
+        permissions automatically. (Who knows how to do this?)<br>
+        <em>Note that access to this device is still a major security hole</em>,
+        suitable to gain root privileges. This is due to the fact that the GPU
+        bypasses the MMU. The risk is comparable to a kernel debug permission.</dd>
+    </dl>
+    <p>See <a href="guide.html">vcio2 programming guide</a> for further
+      details.</p>
+    <h3>Patching the kernel</h3>
+    <p>Since the driver is compatible to <tt>bcm2708_vcio</tt>, it could be
+      used as replacement as part of the kernel. However, this would require you
+      to compile your own kernel on each update. You do not want to compile this
+      on the Raspberry, because it takes a whole day. Using a cross compiler
+      will result in reasonable times.</p>
+    <p>In fact this was my first approach. But for now a DKMS driver is easier
+      to use. If someone thinks that it should be part of the RPi kernel and
+      knows how to contribute, let me know.</p>
+    <h2><a id="bugs" name="bugs"></a>Limitations and known problems</h2>
+    <ul>
+    </ul>
+    <h3>Limitations</h3>
+    <ul>
+      <li>
+        <p>Power management events (e.g. ARM clock changes) are blocked during
+          execution of GPU code.<br>
+          This is an restriction of the RPi firmware. It simply uses the same
+          mailbox channel for system health and GPU execution.</p>
+      </li>
+      <li>
+        <p>No two applications can run GPU code concurrently even if they do not
+          use all QPUs.<br>
+          This is due to some global GPU resources like semaphores that cannot
+          be reasonably shared.</p>
+      </li>
+    </ul>
+    <h3>Bugs</h3>
+    <ul>
+      <li>
+        <p>Closing the device or unlock of memory leaves invalid memory mappings
+          in the current processes virtual address space.<br>
+          This is a bug. I simply did not find a kernel function to revoke
+          memory mappings so far.</p>
+      </li>
+    </ul>
+    <h3>TODOs</h3>
+    <ul>
+      <li>
+        <p>Support for <tt>qpu_enable</tt> to explicitly control the QPU power.</p>
+      </li>
+      <li>
+        <p>Power off the QPU after execution timeouts for better error recovery.</p>
+      </li>
+      <li>
+        <p>Implement some higher level functions that do memory allocations,
+          locking and mapping in one step.</p>
+      </li>
+    </ul>
+    <h2><a id="contact" name="contact"></a>Contact</h2>
+    <p>Comments, ideas, bugs, improvements to <i>raspi at maazl dot de</i>.</p>
+  </body>
+</html>

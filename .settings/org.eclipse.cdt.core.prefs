@@ -1,0 +1,8 @@
+eclipse.preferences.version=1
+environment/project/cdt.managedbuild.config.gnu.exe.debug.188645228/append=true
+environment/project/cdt.managedbuild.config.gnu.exe.debug.188645228/appendContributed=true
+environment/project/cdt.managedbuild.config.gnu.exe.release.158075172/KERNELVERSION/delimiter=\:
+environment/project/cdt.managedbuild.config.gnu.exe.release.158075172/KERNELVERSION/operation=replace
+environment/project/cdt.managedbuild.config.gnu.exe.release.158075172/KERNELVERSION/value=3.13.0-24
+environment/project/cdt.managedbuild.config.gnu.exe.release.158075172/append=true
+environment/project/cdt.managedbuild.config.gnu.exe.release.158075172/appendContributed=true

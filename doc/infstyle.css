@@ -1,0 +1,52 @@
+.abstract {
+  font-style: italic;
+  text-align: center;
+}
+
+.nobr {
+  white-space: nowrap;
+}
+
+h1 {
+  text-align: center;
+  color: #ff0000;
+}
+
+h2 {
+  background-color: #eeeeee;
+}
+
+h1,h2,h3 {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+th,.th {
+  background-color: #eeeeee;
+  text-align: left;
+  vertical-align: bottom;
+  font-weight: bold;
+}
+
+td {
+  vertical-align: baseline;
+}
+
+pre {
+  margin-left: 40px;
+}
+
+sup,sub {
+  font-size: smaller;
+}
+
+em {
+  color: blue;
+}
+
+strong {
+  color: red;
+}
+
+a {
+  color: darkblue;
+}

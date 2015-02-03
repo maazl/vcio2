@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta content="text/html; charset=iso-8859-15" http-equiv="content-type">
+    <title>vcio2 API Reference</title>
+    <meta content="Marcel M&uuml;ller" name="author">
+    <link rel="stylesheet" href="infstyle.css" type="text/css">
+  </head>
+  <body>
+    <h1>vcio2 API Reference</h1>
+    <p><a class="nobr" href="index.html">&#9650; Top</a>, <a class="nobr" href="#IOCTL">&#9660;
+        vcio2 IOCTLs</a>, <a class="nobr" href="#mmap">&#9660; Memory mapping</a>, <a
+        class="nobr" href="guide.html">&#9654; Programming guide</a></p>
+    <h2>Access vcio2 device</h2>
+    <h3><a id="open" name="open"></a>open device</h3>
+    <pre>int vcio2 = open("/dev/vcio2", O_RDWR);</pre>
+    <p>Open the vcio2 device for further usage.</p>
+    <p>Note that all resources acquired by this device are tied to this device
+      handle. So do not close it unless you no longer need the resources.</p>
+    <p>Device handles of vcio2 cannot be reasonably inherited nor passed to
+      forked process instances. The resources are always tied to the PID that
+      opened the device.</p>
+    <p>All calls to vcio2 handles are <em>thread-safe</em>.</p>
+    <h3>close device</h3>
+    <pre>close(vcio2);</pre>
+    <p>Close the vcio2 device and release all resources.</p>
+    <h2><a id="IOCTL" name="IOCTL"></a>vcio2 IOCTLs</h2>
+    <h3><tt><a id="IOCTL_MEM_ALLOC" name="IOCTL_MEM_ALLOC"></a>IOCTL_MEM_ALLOCATE
+        (0xC00C6401) </tt></h3>
+    <p>Allocate GPU memory. The memory is continuous in physical address and
+      taken from the reserved GPU memory pool.</p>
+    <pre>typedef struct
+{ union {
+    struct
+    { unsigned int size;
+      unsigned int alignment;
+      unsigned int flags;<br>    } in;
+    struct
+    { unsigned int handle;
+    } out;
+  };
+} vcio_mem_allocate;<br><br>vcio_mem_allocate buf;<br>...<br>int retval = ioctl(vcio2, IOCTL_MEM_ALLOCATE, &amp;buf);</pre>
+    <dl>
+      <dt><tt>in.size</tt></dt>
+      <dd>Number of bytes to allocate.<br>
+        Note that with CMA enabled (dynamic GPU memory size) in <tt>/boot/config.txt</tt>
+        allocations of more than 16 MiB seem to fail.</dd>
+      <dt><tt>in.alignment</tt></dt>
+      <dd>Alignment of the resulting buffer in physical memory.</dd>
+      <dt><tt>in.flags</tt></dt>
+      <dd><tt>0xC</tt> := cached; <tt>0x4</tt> := direct<br>
+        Other flags unknown. The parameter is directly passed to the <tt>VCMSG_SET_ALLOCATE_MEM</tt>
+        mailbox message.</dd>
+      <dt>return value</dt>
+      <dd><tt>0</tt> := success; any other value = error code. See <tt>errno.h</tt>.</dd>
+      <dt><tt>out.handle</tt></dt>
+      <dd>Memory handle. To be used with <a href="#IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.</dd>
+    </dl>
+    <p>vcio2 keeps track of the allocated memory chunks. As soon as the vcio2
+      device is closed or the application terminates. The memory is given back
+      to the GPU memory pool. So remember to keep the device open!</p>
+    <h3><tt><a id="IOCTL_MEM_RELEASE" name="IOCTL_MEM_RELEASE"></a>IOCTL_MEM_RELEASE
+        (0xC0006402)</tt></h3>
+    <pre>int retval = ioctl(vcio2, IOCTL_MEM_RELEASE, handle);</pre>
+    <p>Release GPU memory. This also unlocks the memory segment if still locked.</p>
+    <dl>
+      <dt><tt>handle</tt></dt>
+      <dd>Memory handle from <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>.</dd>
+      <dt>return value</dt>
+      <dd><tt>0</tt> := success; any other value = error code. See <tt>errno.h</tt>.</dd>
+    </dl>
+    <h3><tt><a id="IOCTL_MEM_LOCK" name="IOCTL_MEM_LOCK"></a>IOCTL_MEM_LOCK
+        (0xC0046403)</tt></h3>
+    <pre>int addr = handle;<br>int retval = ioctl(vcio2, IOCTL_MEM_LOCK, &amp;addr);</pre>
+    <p>Lock the memory segment at a physical address.</p>
+    <dl>
+      <dt><tt>handle</tt></dt>
+      <dd>Memory handle from <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>.</dd>
+      <dt>return value</dt>
+      <dd><tt>0</tt> := success; any other value = error code. See <tt>errno.h</tt>.</dd>
+      <dt><tt>addr</tt></dt>
+      <dd>Physical memory address where the memory segment has been locked.</dd>
+    </dl>
+    <h3><tt><a id="IOCTL_MEM_UNLOCK" name="IOCTL_MEM_UNLOCK"></a>IOCTL_MEM_UNLOCK
+        (0xC0006404) </tt></h3>
+    <pre>int retval = ioctl(vcio2, IOCTL_MEM_UNLOCK, handle);
+</pre>
+    <p>Unlock memory segment and release the binding to a physical address.</p>
+    <dl>
+      <dt><tt>handle</tt></dt>
+      <dd>Memory handle from <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>.</dd>
+      <dt>return value</dt>
+      <dd><tt>0</tt> := success; any other value = error code. See <tt>errno.h</tt>.</dd>
+    </dl>
+    <h3><tt><a id="IOCTL_EXEC_QPU" name="IOCTL_EXEC_QPU"></a>IOCTL_EXEC_QPU
+        (0xC010640B)</tt></h3>
+    <p>Execute QPU code.</p>
+    <pre>typedef struct
+{ unsigned int uniforms;
+  unsigned int code;
+} vcio_exec_qpu_entry;<br>typedef struct
+{ struct
+  { unsigned int num_qpus;
+    unsigned int control;
+    unsigned int noflush;
+    unsigned int timeout;
+  } in;
+} vcio_exec_qpu;<br><br>vcio_exec_qpu buf;<br>...<br>int retval = ioctl(vcio2, IOCTL_EXEC_QPU, &amp;buf);</pre>
+    <dl>
+      <dt><tt>num_qpus</tt></dt>
+      <dd>Number of QPUs that should be kicked off. Each QPU receives their own
+        shader code and their own set of uniforms. So this is also the size of
+        the <tt>control</tt> array.</dd>
+      <dt><tt>control</tt></dt>
+      <dd>Setup entries for each QPU containing the physical start address of
+        the uniforms and the code. This is a <i>physical</i> pointer to an
+        array of <tt>vcio_qpu_entry</tt> structures with exactly <tt>num_qpus</tt>
+        elements.</dd>
+      <dt><tt>noflush</tt></dt>
+      <dd>Flag: do not flush the cache before starting the QPU code.</dd>
+      <dt><tt>timeout</tt></dt>
+      <dd>Timeout in milliseconds to wait for an host interrupt. If the timeout
+        elapses the function returns with an error. Note that this will not stop
+        the QPU code so far.</dd>
+      <dt>return value</dt>
+      <dd>0 in case of success; non-zero otherwise. You will get <tt>EACCES</tt>
+        when one of the physical memory pointers do not belong to a locked
+        memory segment allocated by the same device handle.</dd>
+    </dl>
+    <p>Although vcio2 does some basic checks to prevent accidental access to
+      invalid memory <em>it cannot check for memory access done by the QPU code</em>.
+      So you have to take care to execute only valid QPU code, otherwise the
+      Raspberry might crash. However, in most cases the Raspi will recover from
+      faults after the timeout and no resources will be lost. So GPU development
+      is significantly relaxed.</p>
+    <p>While GPU code is executing the Raspi kernel can no longer access the the
+      property channel used for several other purposes, e.g. power management or
+      several firmware calls. Every attempt to do such a function is blocked
+      until the GPU code raises an host interrupt or the timeout elapsed. This
+      is a restriction of the firmware rather than vcio2.</p>
+    <dl>
+    </dl>
+    <h2><a id="mmap" name="mmap"></a>Memory mapping</h2>
+    <p>To be able to access the GPU memory from the ARM cortex you will need map
+      the memory into you physical address space. Simply use <tt>mmap</tt> with
+      the vcio2 device handle for this purpose.</p>
+    <pre>unsigned offset = base &amp; 0xFFF;<br>char *mem = mmap(0, size + offset, PROT_READ|PROT_WRITE, MAP_SHARED, vcio2, base - offset);<br>if (mem != MAP_ERROR)<br>  mem += offset;</pre>
+    <dl>
+      <dt><tt>base</tt></dt>
+      <dd>Physical address of the memory block from <a href="IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.<br>
+        Note that <tt>mmap</tt> requires base to be aligned at a pages boundary
+        (4092 bytes). Therefore the bit mask.</dd>
+      <dt><tt>size</tt></dt>
+      <dd>Number of bytes to map. This should be the same than the size passed
+        to <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>.</dd>
+      <dt>return value <tt>mem</tt></dt>
+      <dd>Virtual address of the mapped memory or <tt>MAP_FAILED</tt> on error.</dd>
+      <dt><tt>mem + offset</tt></dt>
+      <dd>Virtual address of the GPU memory to be used by the ARM core.</dd>
+    </dl>
+    <p>If the GPU memory is allocated with at least 4k alignment the offset
+      calculations could be dropped since <tt>offset</tt> is always zero.</p>
+    <p>vcio2 validates the memory mappings. I.e. you can only map memory that
+      has been previously allocated with the same device handle. Otherwise you
+      get an <tt>EACCES</tt> error.</p>
+    <var></var>
+  </body>
+</html>
