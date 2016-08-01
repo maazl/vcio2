@@ -44,8 +44,14 @@
     <h2><a id="install" name="vc4asm"></a>Installation instructions</h2>
     <h3>Prerequisites</h3>
     <ul>
-      <li>Install <tt>dkms</tt> package if not yet done.</li>
-      <li>Install <tt>linux-kernel-headers</tt>.</li>
+      <li>Install <tt>dkms</tt> package if not yet done. (<tt>apt-get install
+          dkms</tt>)</li>
+      <li>Install Linux kernel headers. (normally <tt>apt-get install
+          linux-kernel-headers</tt>).<br>
+        The kernel headers must exactly match your running kernel. Check the
+        output of <tt>uname -r</tt> to examine what kernel you use.<br>
+        <em>The Raspbian repositories do not support kernel headers!</em> But
+        have a look <a href="https://www.niksula.hut.fi/%7Emhiienka/Rpi/linux-headers-rpi/">here</a>.</li>
       <li>In fact I only tested with kernel <tt>3.16.0-4-rpi</tt> so far but it
         is likely to work with other kernels too.</li>
     </ul>
@@ -109,18 +115,14 @@
     </ul>
     <h3>Limitations</h3>
     <ul>
-      <li>
-        <p>Power management events (e.g. ARM clock changes) are blocked during
-          execution of GPU code.<br>
-          This is an restriction of the RPi firmware. It simply uses the same
-          mailbox channel for system health and GPU execution.</p>
-      </li>
-      <li>
-        <p>No two applications can run GPU code concurrently even if they do not
-          use all QPUs.<br>
-          This is due to some global GPU resources like semaphores that cannot
-          be reasonably shared.</p>
-      </li>
+      <li> Power management events (e.g. ARM clock changes) are blocked during
+        execution of GPU code.<br>
+        This is an restriction of the RPi firmware. It simply uses the same
+        mailbox channel for system health and GPU execution. </li>
+      <li> No two applications can run GPU code concurrently even if they do not
+        use all QPUs.<br>
+        This is due to some global GPU resources like semaphores that cannot be
+        reasonably shared. </li>
     </ul>
     <h3>Bugs</h3>
     <ul>
@@ -128,21 +130,18 @@
         <p>Closing the device or unlock of memory leaves invalid memory mappings
           in the current processes virtual address space.<br>
           This is a bug. I simply did not find a kernel function to revoke
-          memory mappings so far.</p>
+          memory mappings so far. </p>
       </li>
     </ul>
     <h3>TODOs</h3>
     <ul>
-      <li>
-        <p>Support for <tt>qpu_enable</tt> to explicitly control the QPU power.</p>
+      <li> Support for <tt>qpu_enable</tt> to explicitly control the QPU power.
       </li>
-      <li>
-        <p>Power off the QPU after execution timeouts for better error recovery.</p>
+      <li> Power off the QPU after execution timeouts for better error recovery.
       </li>
-      <li>
-        <p>Implement some higher level functions that do memory allocations,
-          locking and mapping in one step.</p>
-      </li>
+      <li> Implement some higher level functions that do memory allocations,
+        locking and mapping in one step.</li>
+      <li>Provide functions to access the performance counters.</li>
     </ul>
     <h2><a id="contact" name="contact"></a>Contact</h2>
     <p>Comments, ideas, bugs, improvements to <i>raspi at maazl dot de</i>.</p>
