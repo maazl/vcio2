@@ -147,7 +147,7 @@
     <pre>unsigned offset = base &amp; 0xFFF;<br>char *mem = mmap(0, size + offset, PROT_READ|PROT_WRITE, MAP_SHARED, vcio2, base - offset);<br>if (mem != MAP_ERROR)<br>  mem += offset;</pre>
     <dl>
       <dt><tt>base</tt></dt>
-      <dd>Physical address of the memory block from <a href="IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.<br>
+      <dd>Physical address of the memory block from <a href="#IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.<br>
         Note that <tt>mmap</tt> requires base to be aligned at a pages boundary
         (4092 bytes). Therefore the bit mask.</dd>
       <dt><tt>size</tt></dt>
