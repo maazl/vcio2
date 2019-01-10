@@ -12,7 +12,7 @@
     <h1>vcio2 - Kernel driver to access Raspberry Pi VideoCore IV GPU without
       root privileges</h1>
     <p class="abstract">When using Raspberry Pi's GPU from user space (e.g. <a
-        href="http://www.raspberrypi.org/accelerating-fourier-transforms-using-the-gpu/">gpu_fft</a>)
+        href="https://www.raspberrypi.org/accelerating-fourier-transforms-using-the-gpu/">gpu_fft</a>)
       with the built vcio driver in the RPi kernel you need to have root
       privileges for every application.<br>
       The goal of the vcio2 driver is to come around this restriction.
@@ -25,14 +25,14 @@
       <a class="nobr" href="guide.html">&#9654; Programming guide</a>, <a class="nobr"
         href="APIref.html">&#9654; API reference</a>, <a class="nobr" href="#contact">&#9660;
         Contact</a></p>
-    <h2><a id="download" name="download"></a>Download &amp; history</h2>
+    <h2><a name="download"></a>Download &amp; history</h2>
     <p>Download <a href="../vcio2.tar.bz2">DKMS kernel module, an example and
         this documentation</a></p>
     <dl>
       <dt>V0.1</dt>
       <dd>First public release.</dd>
     </dl>
-    <h2><a id="features" name="features"></a>Features</h2>
+    <h2><a name="features"></a>Features</h2>
     <ul>
       <li><b>No root</b> privilege <b>required</b> to use the GPU.</li>
       <li><b>Automatic cleanup of resources</b> like GPU memory on application
@@ -41,7 +41,7 @@
       <li>Enable and disable the GPU automatically.</li>
       <li>Some protection against invalid memory access.</li>
     </ul>
-    <h2><a id="install" name="vc4asm"></a>Installation instructions</h2>
+    <h2><a name="install"></a>Installation instructions</h2>
     <h3>Prerequisites</h3>
     <ul>
       <li>Install <tt>dkms</tt> package if not yet done. (<tt>apt-get install
@@ -75,7 +75,7 @@
       <li><tt>sudo make remove</tt></li>
     </ul>
     <p>This will unload the kernel module and uninstall it.</p>
-    <h2><a id="usage" name="vc4dis"></a>Using the driver</h2>
+    <h2><a name="usage"></a>Using the driver</h2>
     <p>As soon as the driver is loaded successfully, two new devices appear in
       the <tt>/dev</tt> directory.</p>
     <dl>
@@ -87,7 +87,7 @@
         remote file system.<br>
         <em>Using this device does not offer the features of vcio2.</em></dd>
       <dt><tt>/dev/vcio2</tt></dt>
-      <dd>This is the new device which offers new <a href="#featuresvcio2%20User%20space%20API">features</a>.
+      <dd>This is the new device which offers new <a href="#features">features</a>.
         Using this device requires changes to the source code of the
         application. See the <a href="APIref.html">API reference</a> and
         especially the migration guide.<br>
@@ -110,7 +110,7 @@
     <p>In fact this was my first approach. But for now a DKMS driver is easier
       to use. If someone thinks that it should be part of the RPi kernel and
       knows how to contribute, let me know.</p>
-    <h2><a id="bugs" name="bugs"></a>Limitations and known problems</h2>
+    <h2><a name="bugs"></a>Limitations and known problems</h2>
     <ul>
     </ul>
     <h3>Limitations</h3>
@@ -143,7 +143,7 @@
         locking and mapping in one step.</li>
       <li>Provide functions to access the performance counters.</li>
     </ul>
-    <h2><a id="contact" name="contact"></a>Contact</h2>
+    <h2><a name="contact"></a>Contact</h2>
     <p>Comments, ideas, bugs, improvements to <i>raspi at maazl dot de</i>.</p>
   </body>
 </html>

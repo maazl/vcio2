@@ -15,7 +15,7 @@
     <h2>Use the GPU with vcio2</h2>
     <ol>
       <li>Open <tt>/dev/vcio2</tt> with <a href="APIref.html#open"><tt>open</tt></a>.</li>
-      <li>Allocate an appropriate amount of GPU memory with <a href="APIref.html#IOCTL_MEM_ALLOCATE"><tt>IOCTL_MEM_ALLOCATE</tt></a>.<br>
+      <li>Allocate an appropriate amount of GPU memory with <a href="APIref.html#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOCATE</tt></a>.<br>
         You should allocate large amounts of GPU memory in smaller chunks to
         avoid fragmentation of free GPU memory.</li>
       <li>Lock the memory segment with <a href="APIref.html#IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.</li>
@@ -37,7 +37,7 @@
     <p>See <a href="#sample">sample program</a> for further details.</p>
     <p>See also <a href="http://www.maazl.de/project/vc4asm/doc/">vc4asm</a>
       for a powerful and free QPU macro assembler.</p>
-    <h2><a id="migrate" name="IOCTL"></a>Migrating from hello_fft style mailbox</h2>
+    <h2><a id="migrate" name="migrate"></a>Migrating from hello_fft style mailbox</h2>
     <p>If you have an application that uses the old vcio driver, e.g. hello_fft,
       you need to do the following steps to migrate to vcio2:</p>
     <ol>
