@@ -39,8 +39,8 @@
 
 #include <linux/io.h>
 
-#include <mach/vcio2.h>
-#include <mach/platform.h>
+#include "../mach/vcio2.h"
+//#include <mach/platform.h>
 
 #include <asm/uaccess.h>
 
@@ -739,11 +739,11 @@ static vcio_alloc* vcioa_find_addr(const vcio_allocs* allocs, unsigned addr)
 {
 	vcio_alloc* ap;
 	vcio_alloc* ape;
-	pr_info(DRIVER_NAME ": %s(%p{%p,%u,%u}, %x)\n", __func__, allocs, allocs->List, allocs->Count, allocs->Size, addr);
+	pr_debug(DRIVER_NAME ": %s(%p{%p,%u,%u}, %x)\n", __func__, allocs, allocs->List, allocs->Count, allocs->Size, addr);
 	ap = allocs->List;
 	ape = ap + allocs->Count;
 	for (; ap != ape; ++ap)
-	{	pr_info(DRIVER_NAME ": %s {%u,%x,%x}\n", __func__, ap->Handle, ap->Size, ap->Location);
+	{	pr_debug(DRIVER_NAME ": %s {%u,%x,%x}\n", __func__, ap->Handle, ap->Size, ap->Location);
 		if (ap->Location != VCIOA_LOCATION_NONE && addr >= ap->Location && addr < ap->Location + ap->Size)
 			return ap;
 	}
@@ -775,8 +775,9 @@ static void vcioa_destroy(vcio_allocs* allocs)
 /** Private driver data for an opened device handle. */
 typedef struct
 {
-	struct mutex Lock;
-	vcio_allocs  Allocations;
+	struct mutex Lock;        /**< synchronize access to this structure.*/
+	vcio_allocs  Allocations; /**< list with memory allocations of this open device instance. */
+	unsigned Enabled;         /**< Is the QPU enabled by this device instance? */
 
 } vcio_data;
 
@@ -799,8 +800,7 @@ static void vcio_destroy(vcio_data* data)
 }
 
 
-/** Is the device open right now? Used to prevent
- * concurrent access into the same device
+/** Is the device open right now?
  */
 static atomic_t vcio_opened = ATOMIC_INIT(0);
 
@@ -973,6 +973,12 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 						else
 							ap->Location = VCIOA_LOCATION_NONE;
 					}
+					break;
+				}
+
+				case IOCTL_ENABLE_QPU:
+				{	pr_info(DRIVER_NAME ": IOCTL_ENABLE_QPU %x\n", ioctl_param);
+
 					break;
 				}
 

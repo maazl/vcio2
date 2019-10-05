@@ -2,7 +2,8 @@
 #define _MACH_BCM2708_VCIO2_H
 
 #ifdef __KERNEL__
-#include <mach/vcio.h>
+#include <soc/bcm2835/raspberrypi-firmware.h>
+//#include <mach/vcio.h>
 #include <linux/ioctl.h>
 #endif
 
@@ -34,6 +35,8 @@ typedef struct
 #define IOCTL_MEM_LOCK     _IOWR(IOCTL_MEM_TYPE, 3, unsigned)
 
 #define IOCTL_MEM_UNLOCK   _IOC(_IOC_READ|_IOC_WRITE, IOCTL_MEM_TYPE, 4, 0)
+
+#define IOCTL_ENABLE_QPU   _IOC(_IOC_READ|_IOC_WRITE, IOCTL_MEM_TYPE, 12, 0)
 
 typedef struct
 {
