@@ -11,6 +11,9 @@
  * VideoCore processor than vcio offers.
  */
 
+#define _GNU_SOURCE
+//#define DEBUG
+
 // 1 => vcio2 driver is additional to the kernels vcio driver using dkms.
 // 0 => vcio2 driver replaces the kernels vcio driver. - Currently unsupported!
 #define BCM_VCIO2_ADD 1
@@ -64,6 +67,12 @@ static struct device *vcio_dev0 = NULL;
 static struct device *vcio_dev1 = NULL;
 /// root pointer for rpi_firmware API
 static struct rpi_firmware *firmware = NULL;
+
+/// synchronize access to the following working set.
+struct mutex vcio_lock;
+/// Is the QPU enabled now? Number of requesting clients.
+static unsigned vcio_enabled_count = 0;
+
 
 #define mailbox_property(tag) rpi_firmware_property_list(firmware, &tag, sizeof (tag));
 
@@ -149,7 +158,7 @@ static uint32_t ReleaseVcMemory(uint32_t handle)
 		return 0;
 	else
 	{
-		vcio_pr_warn("Failed to release VC memory: recv data size=%08x error=%08x", s, tag.m_recvDataSize, tag.m_args.m_error);
+		vcio_pr_warn("Failed to release VC memory: rc=%i recv data size=%08x error=%08x", s, tag.m_recvDataSize, tag.m_args.m_error);
 		return s ? s : 1;
 	}
 }
@@ -453,7 +462,7 @@ typedef struct
 {
 	struct mutex Lock;        /**< synchronize access to this structure.*/
 	vcio_allocs  Allocations; /**< list with memory allocations of this open device instance. */
-	unsigned Enabled;         /**< Is the QPU enabled by this device instance? */
+	char         Enabled;     /**< Is the QPU enabled by this device instance? */
 
 } vcio_data;
 
@@ -475,10 +484,26 @@ static void vcio_destroy(vcio_data* data)
 	kfree(data);
 }
 
+/** Ensure QPU enabled state.
+ * @param data vcio_data structure.
+ * @param value 1 => request enabled; 0: request disabled.
+ * @remarks The QPU is only disabled when the /last/ open device instance disabled it. */
+static int vcio_set_enabled(vcio_data* data, char value)
+{	int rc = 0;
+	if (data->Enabled != value)
+	{	mutex_lock(&vcio_lock);
+		if ( (value ? ++vcio_enabled_count == 1 : --vcio_enabled_count == 0)
+			&& QpuEnable(1) )
+		{	vcio_enabled_count += value ? -1 : 1;
+			rc = -ENODEV;
+		} else
+			data->Enabled = value;
+		vcio_pr_debug("%s: %u, %i", __func__, vcio_enabled_count, rc);
+		mutex_unlock(&vcio_lock);
+	}
+	return rc;
+}
 
-/** Is the device open right now?
- */
-static atomic_t vcio_opened = ATOMIC_INIT(0);
 
 /** This is called whenever a process attempts to open the device file
  */
@@ -489,14 +514,6 @@ static int device_open(struct inode *inode, struct file *file)
 	if (MINOR(file->f_inode->i_rdev) == 1)
 		file->private_data = vcio_create();
 
-	if (atomic_add_return(1, &vcio_opened) == 1)
-	{
-		if (QpuEnable(1))
-		{	atomic_dec(&vcio_opened);
-			return -ENODEV;
-		}
-	}
-
 	try_module_get(THIS_MODULE);
 	return 0;
 }
@@ -506,10 +523,9 @@ static int device_release(struct inode *inode, struct file *file)
 	vcio_pr_info("closing vcio %p, %p", inode, file);
 
 	if (file->private_data)
+	{	vcio_set_enabled(file->private_data, 0);
 		vcio_destroy(file->private_data);
-
-	if (atomic_dec_and_test(&vcio_opened))
-		QpuEnable(0);
+	}
 
 	module_put(THIS_MODULE);
 	return 0;
@@ -649,19 +665,19 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				}
 
 				case IOCTL_ENABLE_QPU:
-				{	vcio_pr_info("IOCTL_ENABLE_QPU %lx", ioctl_param);
-
+				{	vcio_pr_debug("IOCTL_ENABLE_QPU %lx", ioctl_param);
+					rc = vcio_set_enabled(data, !!ioctl_param);
 					break;
 				}
 
 				case IOCTL_EXEC_QPU:
 				{	vcio_exec_qpu p;
 					copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in);
-					vcio_pr_info("IOCTL_EXEC_QPU %x, %x, %x, %x", p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout);
+					vcio_pr_debug("IOCTL_EXEC_QPU %x, %x, %x, %x", p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout);
 					/* verify starting point */
 					if (!vcioa_find_addr(&data->Allocations, p.in.control))
-					{	rc = -EACCES;
-					} else
+						rc = -EACCES;
+					else if ((rc = vcio_set_enabled(data, 1)) == 0)
 					{	/* TODO: verify starting points of code and uniforms too
 						for (i = 0; i < p.in.num_qpus; ++i)
 						{	if (!vcioa_find_addr(&data->Allocations, ))
@@ -678,7 +694,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 		}
 	}
 fail:
-	vcio_pr_err("unknown ioctl: %d, minor = %d", ioctl_num, MINOR(f->f_inode->i_rdev));
+	vcio_pr_warn("unknown ioctl: %d, minor = %d", ioctl_num, MINOR(f->f_inode->i_rdev));
 	return -EINVAL;
 }
 
@@ -769,6 +785,8 @@ static int vcio_remove(struct platform_device *pdev)
 #ifndef BCM_VCIO2_ADD
 	struct vc_mailbox *mailbox;
 #endif
+
+	mutex_destroy(&vcio_lock);
 
 	if (vcio_dev0 != NULL)
 	{	device_destroy(vcio_class, vcio_dev0->devt);
@@ -908,6 +926,7 @@ static int vcio_probe(struct platform_device *pdev)
 		goto fail;
 	}
 
+	mutex_init(&vcio_lock);
 	/* succeeded! */
 	return 0;
 
@@ -929,7 +948,7 @@ static struct platform_driver vcio_driver = {
 
 static int __init vcio_init(void)
 {
-	int ret;
+	int ret = 0;
 
 	vcio_pr_info("Enhanced Broadcom VideoCore Mailbox driver");
 

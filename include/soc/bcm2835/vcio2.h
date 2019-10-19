@@ -35,7 +35,7 @@ typedef struct
 #define IOCTL_ENABLE_QPU   _IO(IOCTL_VCIO2_TYPE, 0x12) // < unsigned flag
 
 /// Execute code on the QPU
-#define IOCTL_EXEC_QPU     _IOWR(IOCTL_VCIO2_TYPE, 0x11, vcio_exec_qpu)
+#define IOCTL_EXEC_QPU     _IOW(IOCTL_VCIO2_TYPE, 0x11, vcio_exec_qpu)
 typedef struct
 {	uint32_t uniforms;       ///< Bus address of start of uniforms for one QPU
 	uint32_t code;           ///< Bus address of start of code for one QPU

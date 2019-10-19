@@ -96,8 +96,7 @@ unsigned mem_free(int file_desc, unsigned handle)
 {
 	int ret_val = ioctl(file_desc, IOCTL_MEM_RELEASE, handle);
 	if (ret_val)
-	{	printf("mem_free ioctl failed: %d\n", ret_val);
-	}
+		printf("mem_free ioctl failed: %d\n", ret_val);
 	return ret_val;
 }
 
@@ -115,8 +114,7 @@ unsigned mem_unlock(int file_desc, unsigned handle)
 {
 	int ret_val = ioctl(file_desc, IOCTL_MEM_UNLOCK, handle);
 	if (ret_val)
-	{	printf("mem_unlock ioctl failed: %d\n", ret_val);
-	}
+		printf("mem_unlock ioctl failed: %d\n", ret_val);
 	return ret_val;
 }
 
@@ -139,14 +137,16 @@ unsigned execute_qpu(int file_desc, unsigned num_qpus, unsigned control, unsigne
 
 	ret_val = ioctl(file_desc, IOCTL_EXEC_QPU, &buf);
 	if (ret_val)
-	{	printf("execute_qpu failed: %d\n", ret_val);
-	}
+		printf("execute_qpu failed: %d\n", ret_val);
 	return ret_val;
 }
 
 unsigned qpu_enable(int file_desc, unsigned enable)
 {
-	return 0;
+	int ret_val = ioctl(file_desc, IOCTL_ENABLE_QPU, enable);
+	if (ret_val)
+		printf("qpu_enable ioctl failed: %d, %s\n", ret_val, strerror(errno));
+	return ret_val;
 }
 
 int mbox_open()
@@ -155,9 +155,8 @@ int mbox_open()
 
 	// open a char device file used for communicating with kernel mbox driver
 	file_desc = open("/dev/vcio2", O_RDWR);
-	if (file_desc < 0) {
+	if (file_desc < 0)
 		printf("Can't open device file /dev/vcio2: %s\n", strerror(errno));
-	}
 	return file_desc;
 }
 

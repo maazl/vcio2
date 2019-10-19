@@ -36,7 +36,6 @@
       <li>Copy <tt>include/soc/bcm2835/vcio2.h</tt> to your source files.</li>
       <li>Replace the files <tt>mailbox.h</tt> and <tt>mailbox.c</tt> with the ones from the <tt>sample</tt> directory.</li>
       <li>Adjust include path of <tt>vcio2.h</tt> in <tt>mailbox.c</tt>.</li>
-      <li>Comment all occurrences of calls to <tt>qpu_enable</tt>. They are deprecated.</li>
       <li>Add an additional first parameter with the device handle returned from <tt>mbox_open</tt> to any call to <tt>mapmem</tt>.</li>
       <li>Compile and run.</li>
     </ol>
