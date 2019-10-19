@@ -1,89 +1,70 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta content="text/html; charset=iso-8859-15" http-equiv="content-type">
+    <meta http-equiv="content-type" content="text/html; charset=iso-8859-15">
     <title>vcio2 programming guide</title>
-    <meta content="Marcel M&uuml;ller" name="author">
+    <meta content="Marcel Müller" name="author">
     <link rel="stylesheet" href="infstyle.css" type="text/css">
   </head>
   <body>
     <h1>vcio2 programming guide</h1>
-    <p><a class="nobr" href="index.html">&#9650; Top</a>, <a class="nobr" href="#migrate">&#9660;
-        Migrating vcio applications</a>, <a href="#concurrent">&#9660; Concurrent use
-        of vcio2</a>, <a class="nobr" href="#sample">&#9660; Sample code</a>, <a class="nobr"
-        href="APIref.html">&#9654; API reference</a></p>
+    <p><a class="nobr" href="index.html">&#9650; Top</a>, <a class="nobr" href="#migrate">&#9660; Migrating vcio applications</a>, <a href="#concurrent">&#9660;
+        Concurrent use of vcio2</a>, <a class="nobr" href="#sample">&#9660; Sample code</a>, <a class="nobr" href="APIref.html">&#9654; API
+        reference</a></p>
     <h2>Use the GPU with vcio2</h2>
     <ol>
-      <li>Open <tt>/dev/vcio2</tt> with <a href="APIref.html#open"><tt>open</tt></a>.</li>
+      <li>Open <tt>/dev/vcio2</tt> with <a href="APIref.html#open"><tt>open</tt></a> in read/write mode.</li>
       <li>Allocate an appropriate amount of GPU memory with <a href="APIref.html#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOCATE</tt></a>.<br>
-        You should allocate large amounts of GPU memory in smaller chunks to
-        avoid fragmentation of free GPU memory.</li>
+        You should allocate large amounts of GPU memory in smaller chunks to avoid fragmentation of free GPU memory.</li>
       <li>Lock the memory segment with <a href="APIref.html#IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.</li>
       <li>Map the memory with <a href="APIref.html#mmap"><tt>mmap</tt></a>.</li>
-      <li>Place the shader code, the uniforms and the control blocks into the
-        allocated GPU memory. Don't forget that the GPU only accepts physical
-        addresses and cannot access the applications memory.<br>
-        <small>Although the GPU can access all physical memory there is no
-          reasonable way to use application memory directly, since it may be
-          fragmented in physical memory and the GPU cannot use scatter gather
-          lists.</small></li>
+      <li>Place the shader code, the uniforms and the control blocks into the allocated GPU memory. Don't forget that the GPU only
+        accepts physical addresses and cannot access the applications memory.<br>
+        <small>Although the GPU can access all physical memory there is no reasonable way to use application memory directly, since
+          it may be fragmented in physical memory and the GPU cannot use scatter gather lists.</small></li>
       <li>Run your code on the GPU with <a href="APIref.html#IOCTL_EXEC_QPU"><tt>IOCTL_EXEC_QPU</tt></a>.<br>
-        Use an appropriate timeout. This will recover from GPU crashes in most
-        cases.</li>
+        Use an appropriate timeout. This will recover from GPU crashes in most cases.</li>
       <li>Repeat the last two steps as needed.</li>
-      <li>Close the device when you don't need it anymore. This releases all GPU
-        memory allocated by this handle.</li>
+      <li>Close the device when you don't need it anymore. This releases all GPU memory allocated by this handle.</li>
     </ol>
     <p>See <a href="#sample">sample program</a> for further details.</p>
-    <p>See also <a href="http://www.maazl.de/project/vc4asm/doc/">vc4asm</a>
-      for a powerful and free QPU macro assembler.</p>
+    <p>See also <a href="http://www.maazl.de/project/vc4asm/doc/">vc4asm</a> for a powerful and free QPU macro assembler.</p>
     <h2><a id="migrate" name="migrate"></a>Migrating from hello_fft style mailbox</h2>
-    <p>If you have an application that uses the old vcio driver, e.g. hello_fft,
-      you need to do the following steps to migrate to vcio2:</p>
+    <p>If you have an application that uses the old vcio driver, e.g. hello_fft, you need to do the following steps to migrate to
+      vcio2:</p>
     <ol>
-      <li>Copy <tt>mach/vcio2.h</tt> to your source files.</li>
-      <li>Replace the files <tt>mailbox.h</tt> and <tt>mailbox.c</tt> with the
-        ones from the <tt>sample</tt> directory.</li>
+      <li>Copy <tt>include/soc/bcm2835/vcio2.h</tt> to your source files.</li>
+      <li>Replace the files <tt>mailbox.h</tt> and <tt>mailbox.c</tt> with the ones from the <tt>sample</tt> directory.</li>
       <li>Adjust include path of <tt>vcio2.h</tt> in <tt>mailbox.c</tt>.</li>
-      <li>Comment all occurrences of calls to <tt>qpu_enable</tt>. They are
-        deprecated.</li>
-      <li>Add an additional first parameter with the device handle returned from
-        <tt>mbox_open</tt> to any call to <tt>mapmem</tt>.</li>
+      <li>Comment all occurrences of calls to <tt>qpu_enable</tt>. They are deprecated.</li>
+      <li>Add an additional first parameter with the device handle returned from <tt>mbox_open</tt> to any call to <tt>mapmem</tt>.</li>
       <li>Compile and run.</li>
     </ol>
-    <p>Now you application should use the new kernel driver it does no longer
-      require root privileges to run if you grant access to <tt>/dev/vcio2</tt>.</p>
+    <p>Now you application should use the new kernel driver it does no longer require root privileges to run if you grant access to
+      <tt>/dev/vcio2</tt>.</p>
     <h2><a id="concurrent" name="concurrent"></a>Using vcio2 concurrently</h2>
-    <p>The vcio2 device may be opened as often as you like. The only limiting
-      factor is the amount of GPU memory available.</p>
-    <p>Calls to<tt> <a href="APIref.html#IOCTL_EXEC_QPU">IOCTL_EXEC_QPU</a></tt>
-      are strictly serialized. So no two applications can run code on the GPU
-      simultaneously. However, they can run code alternately.</p>
-    <p><em>You should not use the <tt>/dev/vcio</tt> device or a character
-        device of the built-in vcio driver concurrently to <tt>/dev/vcio2</tt>.</em>
-      The calls to this devices are not understood by vcio2 and may seriously
-      interfere with <tt>/dev/vcio2</tt> access. E.g. the application using <tt>/dev/vcio</tt>
-      might disable the power of the GPU while another application is running
-      GPU code. Future versions of vcio2 might lock the other devices while <tt>/dev/vcio2</tt>
-      is open at least once.<br>
-      This restriction does not apply to calls that are independant, e.g.
-      reading the GPU memory size or even GPU memory allocations. The vcio2
-      driver and the vcio driver share a common mutex for this purpose. Only
-      indirect dependencies are not tracked.</p>
+    <p>The vcio2 device may be opened as often as you like. The only limiting factor is the amount of GPU memory available.</p>
+    <p>Calls to<tt> <a href="APIref.html#IOCTL_EXEC_QPU">IOCTL_EXEC_QPU</a></tt> are strictly serialized. So no two applications
+      can run code on the GPU simultaneously. However, they can run code alternately.</p>
+    <p><em>You should not use the <tt>/dev/vcio</tt> device or a character device of the built-in vcio driver concurrently to <tt>/dev/vcio2</tt>.</em>
+      The calls to this devices are not understood by vcio2 and may seriously interfere with <tt>/dev/vcio2</tt> access. E.g. the
+      application using <tt>/dev/vcio</tt> might disable the power of the GPU while another application is running GPU code. Future
+      versions of vcio2 might lock the other devices while <tt>/dev/vcio2</tt> is open at least once.<br>
+      This restriction does not apply to calls that are independent, e.g. reading the GPU memory size or even GPU memory
+      allocations. The vcio2 driver and the vcio driver share a common mutex for this purpose. Only indirect dependencies are not
+      tracked.</p>
     <p>There are no more restrictions that I know of.</p>
     <h2><a id="sample" name="sample"></a>Sample application</h2>
-    <p>In the sample folder there is a simple sample application that utilizes
-      the vcio2 device. It does some stupid computations by applying all
-      available QPU operators to a bunch of constants.</p>
+    <p>In the sample folder there is a simple sample application that utilizes the vcio2 device. It does some stupid computations by
+      applying all available QPU operators to a bunch of constants.</p>
     <h3>How to build</h3>
     <ul>
       <li>Enter the directory sample.</li>
       <li>Type <tt>make</tt></li>
       <li>Run <tt>./smitest</tt></li>
     </ul>
-    <p>Now the test application should print some pages of results to the
-      console. Of course, you need to <a href="index.html#install">install the
-        vcio2 driver</a> before.</p>
+    <p>Now the test application should print some pages of results to the console. Of course, you need to <a href="index.html#install">install
+        the vcio2 driver</a> before.</p>
     <p><var></var></p>
   </body>
 </html>

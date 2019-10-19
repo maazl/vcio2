@@ -1,19 +1,18 @@
 /*
- *  linux/arch/arm/mach-bcm2708/vcio.c
+ *  vcio2.c
  *
- *  Copyright (C) 2010 Broadcom
+ *  Copyright (C) 2015-2019 Marcel Müller
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  *
- * This device provides a shared mechanism for writing to the mailboxes,
- * semaphores, doorbells etc. that are shared between the ARM and the
- * VideoCore processor
+ * This device provides a higher level access to the Raspberry Pi
+ * VideoCore processor than vcio offers.
  */
 
-// 1 := vcio2 driver is additional to the kernels vcio driver.
-// 0 := vcio2 driver replaces the kernels vcio driver.
+// 1 => vcio2 driver is additional to the kernels vcio driver using dkms.
+// 0 => vcio2 driver replaces the kernels vcio driver. - Currently unsupported!
 #define BCM_VCIO2_ADD 1
 
 
@@ -21,634 +20,311 @@
 #define SUPPORT_SYSRQ
 #endif
 
-#include <linux/module.h>
-#include <linux/console.h>
-#include <linux/serial_core.h>
-#include <linux/serial.h>
-#include <linux/errno.h>
+
+#include <linux/cdev.h>
 #include <linux/device.h>
+#include <linux/fs.h>
 #include <linux/init.h>
-#include <linux/mm.h>
-#include <linux/dma-mapping.h>
-#include <linux/platform_device.h>
-#include <linux/sysrq.h>
-#include <linux/delay.h>
+#include <linux/printk.h>
 #include <linux/slab.h>
-#include <linux/interrupt.h>
-#include <linux/irq.h>
-
-#include <linux/io.h>
-
-#include "../mach/vcio2.h"
-//#include <mach/platform.h>
-
-#include <asm/uaccess.h>
+#include <linux/ioctl.h>
+#include <linux/mm.h>
+#include <linux/module.h>
+#include <linux/uaccess.h>
+#include <linux/dma-mapping.h>
+#include <soc/bcm2835/raspberrypi-firmware.h>
+#include <soc/bcm2835/vcio2.h>
 
 
-#define DRIVER_NAME BCM_VCIO_DRIVER_NAME
-
-#ifndef BCM_VCIO2_ADD
-/* ----------------------------------------------------------------------
- *	Mailbox
- * -------------------------------------------------------------------- */
-
-/* offsets from a mail box base address */
-#define MAIL_WRT	0x00	/* write - and next 4 words */
-#define MAIL_RD		0x00	/* read - and next 4 words */
-#define MAIL_POL	0x10	/* read without popping the fifo */
-#define MAIL_SND	0x14	/* sender ID (bottom two bits) */
-#define MAIL_STA	0x18	/* status */
-#define MAIL_CNF	0x1C	/* configuration */
-
-#define MBOX_MSG(chan, data28)		(((data28) & ~0xf) | ((chan) & 0xf))
-#define MBOX_MSG_LSB(chan, data28) (((data28) << 4) | ((chan) & 0xf))
-#define MBOX_CHAN(msg)			((msg) & 0xf)
-#define MBOX_DATA28(msg)		((msg) & ~0xf)
-#define MBOX_DATA28_LSB(msg)		(((uint32_t)msg) >> 4)
-
-#define MBOX_MAGIC 0xd0d0c0de
-
-struct vc_mailbox {
-	struct device *dev;	/* parent device */
-	void __iomem *status;
-	void __iomem *config;
-	void __iomem *read;
-	void __iomem *write;
-	uint32_t msg[MBOX_CHAN_COUNT];
-	struct semaphore sema[MBOX_CHAN_COUNT];
-	uint32_t magic;
-};
-
-static void mbox_init(struct vc_mailbox *mbox_out, struct device *dev,
-		      uint32_t addr_mbox)
-{
-	int i;
-
-	mbox_out->dev = dev;
-	mbox_out->status = __io_address(addr_mbox + MAIL_STA);
-	mbox_out->config = __io_address(addr_mbox + MAIL_CNF);
-	mbox_out->read = __io_address(addr_mbox + MAIL_RD);
-	/* Write to the other mailbox */
-	mbox_out->write =
-	    __io_address((addr_mbox ^ ARM_0_MAIL0_WRT ^ ARM_0_MAIL1_WRT) +
-			 MAIL_WRT);
-
-	for (i = 0; i < MBOX_CHAN_COUNT; i++) {
-		mbox_out->msg[i] = 0;
-		sema_init(&mbox_out->sema[i], 0);
-	}
-
-	/* Enable the interrupt on data reception */
-	writel(ARM_MC_IHAVEDATAIRQEN, mbox_out->config);
-
-	mbox_out->magic = MBOX_MAGIC;
-}
-
-static int mbox_write(struct vc_mailbox *mbox, unsigned chan, uint32_t data28)
-{
-	int rc;
-
-	if (mbox->magic != MBOX_MAGIC)
-		rc = -EINVAL;
-	else {
-		/* wait for the mailbox FIFO to have some space in it */
-		while (0 != (readl(mbox->status) & ARM_MS_FULL))
-			cpu_relax();
-
-		writel(MBOX_MSG(chan, data28), mbox->write);
-		rc = 0;
-	}
-	return rc;
-}
-
-static int mbox_read(struct vc_mailbox *mbox, unsigned chan, uint32_t *data28)
-{
-	int rc;
-
-	if (mbox->magic != MBOX_MAGIC)
-		rc = -EINVAL;
-	else {
-		down(&mbox->sema[chan]);
-		*data28 = MBOX_DATA28(mbox->msg[chan]);
-		mbox->msg[chan] = 0;
-		rc = 0;
-	}
-	return rc;
-}
-
-static irqreturn_t mbox_irq(int irq, void *dev_id)
-{
-	/* wait for the mailbox FIFO to have some data in it */
-	struct vc_mailbox *mbox = (struct vc_mailbox *) dev_id;
-	int status = readl(mbox->status);
-	int ret = IRQ_NONE;
-
-	while (!(status & ARM_MS_EMPTY)) {
-		uint32_t msg = readl(mbox->read);
-		int chan = MBOX_CHAN(msg);
-		if (chan < MBOX_CHAN_COUNT) {
-			if (mbox->msg[chan]) {
-				/* Overflow */
-				printk(KERN_ERR DRIVER_NAME
-				       ": mbox chan %d overflow - drop %08x\n",
-				       chan, msg);
-			} else {
-				mbox->msg[chan] = (msg | 0xf);
-				up(&mbox->sema[chan]);
-			}
-		} else {
-			printk(KERN_ERR DRIVER_NAME
-			       ": invalid channel selector (msg %08x)\n", msg);
-		}
-		ret = IRQ_HANDLED;
-		status = readl(mbox->status);
-	}
-	return ret;
-}
-
-static struct irqaction mbox_irqaction = {
-	.name = "ARM Mailbox IRQ",
-	.flags = IRQF_DISABLED | IRQF_IRQPOLL,
-	.handler = mbox_irq,
-};
-
-/* ----------------------------------------------------------------------
- *	Mailbox Methods
- * -------------------------------------------------------------------- */
-
-static struct device *mbox_dev;	/* we assume there's only one! */
-
-static int dev_mbox_write(struct device *dev, unsigned chan, uint32_t data28)
-{
-	int rc;
-
-	struct vc_mailbox *mailbox = dev_get_drvdata(dev);
-	device_lock(dev);
-	rc = mbox_write(mailbox, chan, data28);
-	device_unlock(dev);
-
-	return rc;
-}
-
-static int dev_mbox_read(struct device *dev, unsigned chan, uint32_t *data28)
-{
-	int rc;
-
-	struct vc_mailbox *mailbox = dev_get_drvdata(dev);
-	device_lock(dev);
-	rc = mbox_read(mailbox, chan, data28);
-	device_unlock(dev);
-
-	return rc;
-}
-
-extern int bcm_mailbox_write(unsigned chan, uint32_t data28)
-{
-	if (mbox_dev)
-		return dev_mbox_write(mbox_dev, chan, data28);
-	else
-		return -ENODEV;
-}
-EXPORT_SYMBOL_GPL(bcm_mailbox_write);
-
-extern int bcm_mailbox_read(unsigned chan, uint32_t *data28)
-{
-	if (mbox_dev)
-		return dev_mbox_read(mbox_dev, chan, data28);
-	else
-		return -ENODEV;
-}
-EXPORT_SYMBOL_GPL(bcm_mailbox_read);
-
-static void dev_mbox_register(const char *dev_name, struct device *dev)
-{
-	mbox_dev = dev;
-}
+#ifdef BCM_VCIO2_ADD
+#define DRIVER_NAME "vcio2"
+#else
+#define DRIVER_NAME "bcm2708_vcio"
 #endif
 
-static int mbox_copy_from_user(void *dst, const void *src, int size)
+#define vcio_pr_err(fmt, args...) pr_err("%s: " fmt "\n", DRIVER_NAME, ## args)
+#define vcio_pr_warn(fmt, args...) pr_warn("%s: " fmt "\n", DRIVER_NAME, ## args)
+#define vcio_pr_info(fmt, args...) pr_info("%s: " fmt "\n", DRIVER_NAME, ## args)
+#define vcio_pr_debug(fmt, args...) pr_devel("%s: " fmt "\n", DRIVER_NAME, ## args)
+
+
+/// vcio device passed to vcio_probe
+static struct device *vcio_pdev = NULL;
+/// vcio character device id from cdev_add, non-zero if allocated.
+static dev_t vcio_dev = 0;
+/// vcio character device, non-zero if allocated.
+static struct cdev vcio_cdev0 = { };
+/// vcio character device, non-zero if allocated.
+static struct cdev vcio_cdev1 = { };
+/// device class from class_create, non-zero if allocated.
+static struct class *vcio_class = NULL;
+/// device vcio created by device_create, non-zero if allocated.
+static struct device *vcio_dev0 = NULL;
+/// device vcio1 created by device_create, non-zero if allocated.
+static struct device *vcio_dev1 = NULL;
+/// root pointer for rpi_firmware API
+static struct rpi_firmware *firmware = NULL;
+
+#define mailbox_property(tag) rpi_firmware_property_list(firmware, &tag, sizeof (tag));
+
+
+static uint32_t AllocateVcMemory(uint32_t *pHandle, uint32_t size, uint32_t alignment, uint32_t flags)
 {
-	if ( (uint32_t)src < TASK_SIZE)
+	struct vc_tag
 	{
-		return copy_from_user(dst, src, size);
-	}
-	else
-	{
-		memcpy( dst, src, size );
-		return 0;
-	}
-}
+		uint32_t m_tagId;
+		uint32_t m_sendBufferSize;
+		union {
+			uint32_t m_sendDataSize;
+			uint32_t m_recvDataSize;
+		};
 
-static int mbox_copy_to_user(void *dst, const void *src, int size)
-{
-	if ( (uint32_t)dst < TASK_SIZE)
-	{
-		return copy_to_user(dst, src, size);
-	}
-	else
-	{
-		memcpy( dst, src, size );
-		return 0;
-	}
-}
-
-#ifndef BCM_VCIO2_ADD
-static DEFINE_MUTEX(mailbox_lock);
-extern int bcm_mailbox_property(void *data, int size)
-{
-	uint32_t success;
-	dma_addr_t mem_bus;				/* the memory address accessed from videocore */
-	void *mem_kern;					/* the memory address accessed from driver */
-	int s = 0;
-
-        mutex_lock(&mailbox_lock);
-	/* allocate some memory for the messages communicating with GPU */
-	mem_kern = dma_alloc_coherent(NULL, PAGE_ALIGN(size), &mem_bus, GFP_ATOMIC);
-	if (mem_kern) {
-		/* create the message */
-		mbox_copy_from_user(mem_kern, data, size);
-
-		/* send the message */
-		wmb();
-		s = bcm_mailbox_write(MBOX_CHAN_PROPERTY, (uint32_t)mem_bus);
-		if (s == 0) {
-			s = bcm_mailbox_read(MBOX_CHAN_PROPERTY, &success);
-		}
-		if (s == 0) {
-			/* copy the response */
-			rmb();
-			mbox_copy_to_user(data, mem_kern, size);
-		}
-		dma_free_coherent(NULL, PAGE_ALIGN(size), mem_kern, mem_bus);
-	} else {
-		s = -ENOMEM;
-	}
-	if (s != 0)
-		printk(KERN_ERR DRIVER_NAME ": %s failed (%d)\n", __func__, s);
-
-        mutex_unlock(&mailbox_lock);
-	return s;
-}
-EXPORT_SYMBOL_GPL(bcm_mailbox_property);
-#endif
-
-/* ----------------------------------------------------------------------
- *	Platform Device for Mailbox
- * -------------------------------------------------------------------- */
-
-static unsigned int AllocateVcMemory(unsigned int *pHandle, unsigned int size, unsigned int alignment, unsigned int flags)
-{
-	struct vc_msg
-	{
-		unsigned int m_msgSize;
-		unsigned int m_response;
-
-		struct vc_tag
+		struct args
 		{
-			unsigned int m_tagId;
-			unsigned int m_sendBufferSize;
 			union {
-				unsigned int m_sendDataSize;
-				unsigned int m_recvDataSize;
+				uint32_t m_size;
+				uint32_t m_handle;
 			};
-
-			struct args
-			{
-				union {
-					unsigned int m_size;
-					unsigned int m_handle;
-				};
-				unsigned int m_alignment;
-				unsigned int m_flags;
-			} m_args;
-		} m_tag;
-
-		unsigned int m_endTag;
-	} msg;
+			uint32_t m_alignment;
+			uint32_t m_flags;
+		} m_args;
+	} tag;
 	int s;
-
-	msg.m_msgSize = sizeof(msg);
-	msg.m_response = 0;
-	msg.m_endTag = 0;
 
 	//fill in the tag for the allocation command
-	msg.m_tag.m_tagId = VCMSG_SET_ALLOCATE_MEM;
-	msg.m_tag.m_sendBufferSize = 12;
-	msg.m_tag.m_sendDataSize = 12;
+	tag.m_tagId = RPI_FIRMWARE_ALLOCATE_MEMORY;
+	tag.m_sendDataSize = tag.m_sendBufferSize = 12;
 
 	//fill in our args
-	msg.m_tag.m_args.m_size = size;
-	msg.m_tag.m_args.m_alignment = alignment;
-	msg.m_tag.m_args.m_flags = flags;
+	tag.m_args.m_size = size;
+	tag.m_args.m_alignment = alignment;
+	tag.m_args.m_flags = flags;
 
 	//run the command
-	s = bcm_mailbox_property(&msg, sizeof(msg));
+	s = mailbox_property(tag);
 
-	if (s == 0 && msg.m_response == 0x80000000 && msg.m_tag.m_recvDataSize == 0x80000004)
+	if (s == 0 && tag.m_recvDataSize == 0x80000004)
 	{
-		*pHandle = msg.m_tag.m_args.m_handle;
+		*pHandle = tag.m_args.m_handle;
 		return 0;
 	}
 	else
 	{
-		printk(KERN_ERR "failed to allocate vc memory: s=%d response=%08x recv data size=%08x\n",
-				s, msg.m_response, msg.m_tag.m_recvDataSize);
-		return 1;
+		vcio_pr_warn("Failed to allocate VC memory: s=%d recv data size=%08x", s, tag.m_recvDataSize);
+		return s ? s : 1;
 	}
 }
 
-static unsigned int ReleaseVcMemory(unsigned int handle)
+static uint32_t ReleaseVcMemory(uint32_t handle)
 {
-	struct vc_msg
+	struct vc_tag
 	{
-		unsigned int m_msgSize;
-		unsigned int m_response;
+		uint32_t m_tagId;
+		uint32_t m_sendBufferSize;
+		union {
+			uint32_t m_sendDataSize;
+			uint32_t m_recvDataSize;
+		};
 
-		struct vc_tag
+		struct args
 		{
-			unsigned int m_tagId;
-			unsigned int m_sendBufferSize;
 			union {
-				unsigned int m_sendDataSize;
-				unsigned int m_recvDataSize;
+				uint32_t m_handle;
+				uint32_t m_error;
 			};
-
-			struct args
-			{
-				union {
-					unsigned int m_handle;
-					unsigned int m_error;
-				};
-			} m_args;
-		} m_tag;
-
-		unsigned int m_endTag;
-	} msg;
+		} m_args;
+	} tag;
 	int s;
-
-	msg.m_msgSize = sizeof(msg);
-	msg.m_response = 0;
-	msg.m_endTag = 0;
 
 	//fill in the tag for the release command
-	msg.m_tag.m_tagId = VCMSG_SET_RELEASE_MEM;
-	msg.m_tag.m_sendBufferSize = 4;
-	msg.m_tag.m_sendDataSize = 4;
+	tag.m_tagId = RPI_FIRMWARE_RELEASE_MEMORY;
+	tag.m_sendDataSize = tag.m_sendBufferSize = 4;
 
 	//pass across the handle
-	msg.m_tag.m_args.m_handle = handle;
+	tag.m_args.m_handle = handle;
 
-	s = bcm_mailbox_property(&msg, sizeof(msg));
+	s = mailbox_property(tag);
 
-	if (s == 0 && msg.m_response == 0x80000000 && msg.m_tag.m_recvDataSize == 0x80000004 && msg.m_tag.m_args.m_error == 0)
+	if (s == 0 && tag.m_recvDataSize == 0x80000004 && tag.m_args.m_error == 0)
 		return 0;
 	else
 	{
-		printk(KERN_ERR "failed to release vc memory: s=%d response=%08x recv data size=%08x error=%08x\n",
-				s, msg.m_response, msg.m_tag.m_recvDataSize, msg.m_tag.m_args.m_error);
-		return 1;
+		vcio_pr_warn("Failed to release VC memory: recv data size=%08x error=%08x", s, tag.m_recvDataSize, tag.m_args.m_error);
+		return s ? s : 1;
 	}
 }
 
-static unsigned int LockVcMemory(unsigned int *pBusAddress, unsigned int handle)
+static uint32_t LockVcMemory(uint32_t *pBusAddress, uint32_t handle)
 {
-	struct vc_msg
+	struct vc_tag
 	{
-		unsigned int m_msgSize;
-		unsigned int m_response;
+		uint32_t m_tagId;
+		uint32_t m_sendBufferSize;
+		union {
+			uint32_t m_sendDataSize;
+			uint32_t m_recvDataSize;
+		};
 
-		struct vc_tag
+		struct args
 		{
-			unsigned int m_tagId;
-			unsigned int m_sendBufferSize;
 			union {
-				unsigned int m_sendDataSize;
-				unsigned int m_recvDataSize;
+				uint32_t m_handle;
+				uint32_t m_busAddress;
 			};
-
-			struct args
-			{
-				union {
-					unsigned int m_handle;
-					unsigned int m_busAddress;
-				};
-			} m_args;
-		} m_tag;
-
-		unsigned int m_endTag;
-	} msg;
+		} m_args;
+	} tag;
 	int s;
-
-	msg.m_msgSize = sizeof(msg);
-	msg.m_response = 0;
-	msg.m_endTag = 0;
 
 	//fill in the tag for the lock command
-	msg.m_tag.m_tagId = VCMSG_SET_LOCK_MEM;
-	msg.m_tag.m_sendBufferSize = 4;
-	msg.m_tag.m_sendDataSize = 4;
+	tag.m_tagId = RPI_FIRMWARE_LOCK_MEMORY;
+	tag.m_sendDataSize = tag.m_sendBufferSize = 4;
 
 	//pass across the handle
-	msg.m_tag.m_args.m_handle = handle;
+	tag.m_args.m_handle = handle;
 
-	s = bcm_mailbox_property(&msg, sizeof(msg));
+	s = mailbox_property(tag);
 
-	if (s == 0 && msg.m_response == 0x80000000 && msg.m_tag.m_recvDataSize == 0x80000004)
+	if (s == 0 && tag.m_recvDataSize == 0x80000004)
 	{
 		//pick out the bus address
-		*pBusAddress = msg.m_tag.m_args.m_busAddress;
+		*pBusAddress = tag.m_args.m_busAddress;
 		return 0;
 	}
 	else
 	{
-		printk(KERN_ERR "failed to lock vc memory: s=%d response=%08x recv data size=%08x\n",
-				s, msg.m_response, msg.m_tag.m_recvDataSize);
-		return 1;
+		vcio_pr_warn("Failed to lock VC memory: s=%d recv data size=%08x", s, tag.m_recvDataSize);
+		return s ? s : 1;
 	}
 }
 
-static unsigned int UnlockVcMemory(unsigned int handle)
+static uint32_t UnlockVcMemory(uint32_t handle)
 {
-	struct vc_msg
+	struct vc_tag
 	{
-		unsigned int m_msgSize;
-		unsigned int m_response;
+		uint32_t m_tagId;
+		uint32_t m_sendBufferSize;
+		union {
+			uint32_t m_sendDataSize;
+			uint32_t m_recvDataSize;
+		};
 
-		struct vc_tag
+		struct args
 		{
-			unsigned int m_tagId;
-			unsigned int m_sendBufferSize;
 			union {
-				unsigned int m_sendDataSize;
-				unsigned int m_recvDataSize;
+				uint32_t m_handle;
+				uint32_t m_error;
 			};
-
-			struct args
-			{
-				union {
-					unsigned int m_handle;
-					unsigned int m_error;
-				};
-			} m_args;
-		} m_tag;
-
-		unsigned int m_endTag;
-	} msg;
+		} m_args;
+	} tag;
 	int s;
-
-	msg.m_msgSize = sizeof(msg);
-	msg.m_response = 0;
-	msg.m_endTag = 0;
 
 	//fill in the tag for the unlock command
-	msg.m_tag.m_tagId = VCMSG_SET_UNLOCK_MEM;
-	msg.m_tag.m_sendBufferSize = 4;
-	msg.m_tag.m_sendDataSize = 4;
+	tag.m_tagId = RPI_FIRMWARE_UNLOCK_MEMORY;
+	tag.m_sendDataSize = tag.m_sendBufferSize = 4;
 
 	//pass across the handle
-	msg.m_tag.m_args.m_handle = handle;
+	tag.m_args.m_handle = handle;
 
-	s = bcm_mailbox_property(&msg, sizeof(msg));
+	s = mailbox_property(tag);
 
 	//check the error code too
-	if (s == 0 && msg.m_response == 0x80000000 && msg.m_tag.m_recvDataSize == 0x80000004 && msg.m_tag.m_args.m_error == 0)
+	if (s == 0 && tag.m_recvDataSize == 0x80000004 && tag.m_args.m_error == 0)
 		return 0;
 	else
 	{
-		printk(KERN_ERR "failed to unlock vc memory: s=%d response=%08x recv data size=%08x error%08x\n",
-				s, msg.m_response, msg.m_tag.m_recvDataSize, msg.m_tag.m_args.m_error);
-		return 1;
+		vcio_pr_warn("Failed to unlock VC memory: s=%d recv data size=%08x error%08x", s, tag.m_recvDataSize, tag.m_args.m_error);
+		return s ? s : 1;
 	}
 }
 
-static unsigned int bcm_qpu_enable(unsigned enable)
+static uint32_t QpuEnable(unsigned enable)
 {
-	struct vc_msg
+	struct vc_tag
 	{
-		unsigned int m_msgSize;
-		unsigned int m_response;
+		uint32_t m_tagId;
+		uint32_t m_sendBufferSize;
+		union {
+			uint32_t m_sendDataSize;
+			uint32_t m_recvDataSize;
+		};
 
-		struct vc_tag
+		struct args
 		{
-			unsigned int m_tagId;
-			unsigned int m_sendBufferSize;
 			union {
-				unsigned int m_sendDataSize;
-				unsigned int m_recvDataSize;
+				uint32_t m_enable;
+				uint32_t m_return;
 			};
-
-			struct args
-			{
-				union {
-					unsigned int m_enable;
-					unsigned int m_return;
-				};
-			} m_args;
-		} m_tag;
-
-		unsigned int m_endTag;
-	} msg;
+		} m_args;
+	} tag;
 	int s;
 
-	pr_debug(DRIVER_NAME ": qpu_enable(%d)\n", enable);
+	vcio_pr_debug("%s %d", __func__, enable);
 
 	/* property message to VCIO channel */
-	/* create the message */
-	msg.m_msgSize = sizeof(msg);
-	msg.m_response = 0;
-	msg.m_endTag = 0;
+	tag.m_tagId = RPI_FIRMWARE_SET_ENABLE_QPU;
+	tag.m_sendDataSize = tag.m_sendBufferSize = 4;
 
-	msg.m_tag.m_tagId = VCMSG_SET_ENABLE_QPU;
-	msg.m_tag.m_sendBufferSize = 4;
-	msg.m_tag.m_sendDataSize = 4;
-
-	s = bcm_mailbox_property(&msg, sizeof msg);
+	s = mailbox_property(tag);
 
 	//check the error code too
-	if (s == 0 && msg.m_response == 0x80000000 && msg.m_tag.m_recvDataSize == 0x80000004)
-		return msg.m_tag.m_args.m_return;
+	if (s == 0 && tag.m_recvDataSize == 0x80000004)
+		return tag.m_args.m_return;
 	else
 	{
-		pr_err(DRIVER_NAME ": failed to execute QPU: s=%d response=%08x recv data size=%08x\n",
-				s, msg.m_response, msg.m_tag.m_recvDataSize);
+		vcio_pr_warn("Failed to execute QPU: s=%d recv data size=%08x", s, tag.m_recvDataSize);
 		return s;
 	}
 }
 
-static unsigned int bcm_execute_qpu(unsigned num_qpus, unsigned control, unsigned noflush, unsigned timeout)
+static uint32_t ExecuteQpu(uint32_t num_qpus, uint32_t control, uint32_t noflush, uint32_t timeout)
 {
-	struct vc_msg
+	struct vc_tag
 	{
-		unsigned int m_msgSize;
-		unsigned int m_response;
+		uint32_t m_tagId;
+		uint32_t m_sendBufferSize;
+		union {
+			uint32_t m_sendDataSize;
+			uint32_t m_recvDataSize;
+		};
 
-		struct vc_tag
+		struct args
 		{
-			unsigned int m_tagId;
-			unsigned int m_sendBufferSize;
 			union {
-				unsigned int m_sendDataSize;
-				unsigned int m_recvDataSize;
+				uint32_t m_numQpus;
+				uint32_t m_return;
 			};
-
-			struct args
-			{
-				union {
-					unsigned int m_numQpus;
-					unsigned int m_return;
-				};
-				unsigned int m_control;
-				unsigned int m_noflush;
-				unsigned int m_timeout;
-			} m_args;
-		} m_tag;
-
-		unsigned int m_endTag;
-	} msg;
+			uint32_t m_control;
+			uint32_t m_noflush;
+			uint32_t m_timeout;
+		} m_args;
+	} tag;
 	int s;
 
-	pr_info(DRIVER_NAME ": execute_qpu(%d, %x, %d, %d)\n", num_qpus, control, noflush, timeout);
+	vcio_pr_debug("%s(%d, %x, %d, %d)", __func__, num_qpus, control, noflush, timeout);
 
 	/* property message to VCIO channel */
-
-	/* create the message */
-	msg.m_msgSize = sizeof(msg);
-	msg.m_response = 0;
-	msg.m_endTag = 0;
-
-	msg.m_tag.m_tagId = VCMSG_SET_EXECUTE_QPU;
-	msg.m_tag.m_sendBufferSize = 16;
-	msg.m_tag.m_sendDataSize = 16;
+	tag.m_tagId = RPI_FIRMWARE_EXECUTE_QPU;
+	tag.m_sendDataSize = tag.m_sendBufferSize = 16;
 
 	//pass across the handle
-	msg.m_tag.m_args.m_numQpus = num_qpus;
-	msg.m_tag.m_args.m_control = control;
-	msg.m_tag.m_args.m_noflush = noflush;
-	msg.m_tag.m_args.m_timeout = timeout;
+	tag.m_args.m_numQpus = num_qpus;
+	tag.m_args.m_control = control;
+	tag.m_args.m_noflush = noflush;
+	tag.m_args.m_timeout = timeout;
 
-	s = bcm_mailbox_property(&msg, sizeof msg);
+	s = mailbox_property(tag);
+
+	vcio_pr_debug("mbox: %i", s);
 
 	//check the error code too
-	if (s == 0 && msg.m_response == 0x80000000 && msg.m_tag.m_recvDataSize == 0x80000004)
-		return msg.m_tag.m_args.m_return;
+	if (s == 0 && tag.m_recvDataSize == 0x80000004)
+		return tag.m_args.m_return;
 	else
 	{
-		pr_err(DRIVER_NAME ": failed to execute QPU: s=%d response=%08x recv data size=%08x\n",
-				s, msg.m_response, msg.m_tag.m_recvDataSize);
+		vcio_pr_warn("Failed to execute QPU: s=%d recv data size=%08x", s, tag.m_recvDataSize);
 		return s;
 	}
 }
-
-
-/* seems there is no opposite of remap_pfn_range
-static int vcio_munmap(struct mm_struct* mm, unsigned long start, size_t len)
-{
-	int ret;
-	down_write(&mm->mmap_sem);
-	ret = do_munmap(mm, start, len);
-	up_write(&mm->mmap_sem);
-	return ret;
-}*/
 
 /** allocation entry */
 typedef struct
@@ -672,12 +348,12 @@ typedef struct
  * @param allocs Allocation collection.
  * @param handle Memory handle to search for.
  * @return Location in allocs->List if found or
- * 2's complement of the location where it should be insert if not found. */
+ * 2's complement of the location where it should be inserted if not found. */
 static int vcioa_locate(const vcio_allocs* allocs, unsigned handle)
 {
 	unsigned l = 0;
 	unsigned r = allocs->Count;
-	pr_debug(DRIVER_NAME ": %s(%p{%p,%u,%u}, %x)\n", __func__, allocs, allocs->List, allocs->Count, allocs->Size, handle);
+	vcio_pr_debug("%s(%p{%p,%u,%u}, %x)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, handle);
 	while (l < r)
 	{	unsigned m = (l + r) >> 1;
 		unsigned h = allocs->List[m].Handle;
@@ -698,7 +374,7 @@ static int vcioa_locate(const vcio_allocs* allocs, unsigned handle)
 static vcio_alloc* vcioa_insert(vcio_allocs* allocs, unsigned pos)
 {
 	vcio_alloc* dp;
-	pr_debug(DRIVER_NAME ": %s(%p{%p,%u,%u}, %u)\n", __func__, allocs, allocs->List, allocs->Count, allocs->Size, pos);
+	vcio_pr_debug("%s(%p{%p,%u,%u}, %u)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, pos);
 
 	if (allocs->Count >= allocs->Size)
 	{	// reallocate
@@ -723,7 +399,7 @@ static vcio_alloc* vcioa_insert(vcio_allocs* allocs, unsigned pos)
 static void vcioa_delete(vcio_allocs* allocs, unsigned pos)
 {
 	vcio_alloc* dp;
-	pr_debug(DRIVER_NAME ": %s(%p{%p,%u,%u}, %u)\n", __func__, allocs, allocs->List, allocs->Count, allocs->Size, pos);
+	vcio_pr_debug("%s(%p{%p,%u,%u}, %u)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, pos);
 	dp = allocs->List + pos;
 	--allocs->Count;
 	memmove(dp + 1, dp, (allocs->Count - pos) * sizeof *allocs->List);
@@ -739,11 +415,11 @@ static vcio_alloc* vcioa_find_addr(const vcio_allocs* allocs, unsigned addr)
 {
 	vcio_alloc* ap;
 	vcio_alloc* ape;
-	pr_debug(DRIVER_NAME ": %s(%p{%p,%u,%u}, %x)\n", __func__, allocs, allocs->List, allocs->Count, allocs->Size, addr);
+	vcio_pr_debug("%s(%p{%p,%u,%u}, %x)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, addr);
 	ap = allocs->List;
 	ape = ap + allocs->Count;
 	for (; ap != ape; ++ap)
-	{	pr_debug(DRIVER_NAME ": %s {%u,%x,%x}\n", __func__, ap->Handle, ap->Size, ap->Location);
+	{	vcio_pr_debug("%s {%u,%x,%x}", __func__, ap->Handle, ap->Size, ap->Location);
 		if (ap->Location != VCIOA_LOCATION_NONE && addr >= ap->Location && addr < ap->Location + ap->Size)
 			return ap;
 	}
@@ -757,12 +433,12 @@ static void vcioa_destroy(vcio_allocs* allocs)
 {
 	vcio_alloc* ap;
 	vcio_alloc* ape;
-	pr_debug(DRIVER_NAME ": %s(%p{%p,%u,%u})\n", __func__, allocs, allocs->List, allocs->Count, allocs->Size);
+	vcio_pr_debug("%s(%p{%p,%u,%u})", __func__, allocs, allocs->List, allocs->Count, allocs->Size);
 	/* clean up memory resources */
 	ap = allocs->List;
 	ape = ap + allocs->Count;
 	for (; ap != ape; ++ap)
-	{	pr_info(DRIVER_NAME ": cleanup GPU memory: %x @ %x[%x]\n", ap->Handle, ap->Location, ap->Size);
+	{	vcio_pr_info("cleanup GPU memory: %x @ %x[%x]", ap->Handle, ap->Location, ap->Size);
 		if (ap->Location != VCIOA_LOCATION_NONE)
 			UnlockVcMemory(ap->Handle);
 		ReleaseVcMemory(ap->Handle);
@@ -808,37 +484,32 @@ static atomic_t vcio_opened = ATOMIC_INIT(0);
  */
 static int device_open(struct inode *inode, struct file *file)
 {
-	pr_info(DRIVER_NAME ": opening vcio %p, %p\n", inode, file);
+	vcio_pr_info("opening vcio %p, %p", inode, file);
 
 	if (MINOR(file->f_inode->i_rdev) == 1)
 		file->private_data = vcio_create();
 
 	if (atomic_add_return(1, &vcio_opened) == 1)
 	{
-		if (bcm_qpu_enable(1))
+		if (QpuEnable(1))
 		{	atomic_dec(&vcio_opened);
 			return -ENODEV;
 		}
 	}
 
-	/*
-	 * Initialize the message 
-	 */
 	try_module_get(THIS_MODULE);
 	return 0;
 }
 
 static int device_release(struct inode *inode, struct file *file)
 {
-	pr_info(DRIVER_NAME ": closing vcio %p, %p\n", inode, file);
+	vcio_pr_info("closing vcio %p, %p", inode, file);
 
 	if (file->private_data)
 		vcio_destroy(file->private_data);
 
 	if (atomic_dec_and_test(&vcio_opened))
-	{
-		bcm_qpu_enable(0);
-	}
+		QpuEnable(0);
 
 	module_put(THIS_MODULE);
 	return 0;
@@ -856,9 +527,9 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 		 unsigned int ioctl_num,	/* number and param for ioctl */
 		 unsigned long ioctl_param)
 {
-	unsigned size;
 	switch (MINOR(f->f_inode->i_rdev))
 	{
+#ifndef BCM_VCIO2_ADD
 		case 0: // the 'old' vcio device without further checking.
 			/*
 			 * Switch according to the ioctl called
@@ -874,6 +545,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				return bcm_mailbox_property((void *)ioctl_param, size);
 				return 0;
 			}
+#endif
 		case 1: // new vcio2 device /with/ memory checking and leak prevention.
 		{	vcio_data* data = f->private_data;
 			long rc = 0;
@@ -889,14 +561,14 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 					vcio_mem_allocate p;
 					vcio_alloc* ap;
 					unsigned size;
-					mbox_copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in);
+					copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in);
 					size = p.in.size;
-					pr_debug(DRIVER_NAME ": IOCTL_MEM_ALLOCATE %x, %x, %x\n", size, p.in.alignment, p.in.flags);
+					vcio_pr_debug("IOCTL_MEM_ALLOCATE %x, %x, %x", size, p.in.alignment, p.in.flags);
 					if (AllocateVcMemory(&p.out.handle, size, p.in.alignment, p.in.flags))
 					{	p.out.handle = 0;
 						rc = -ENOMEM;
 					} else if ((pos = vcioa_locate(&data->Allocations, p.out.handle)) >= 0)
-					{	pr_err(DRIVER_NAME ": allocated handle %d twice ???\n", p.out.handle);
+					{	vcio_pr_err("allocated handle %d twice ???", p.out.handle);
 						ReleaseVcMemory(p.out.handle);
 						p.out.handle = 0;
 						rc = -EINVAL;
@@ -909,15 +581,15 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 						ap->Handle = p.out.handle;
 						ap->Size = size;
 						ap->Location = VCIOA_LOCATION_NONE;
-						pr_debug(DRIVER_NAME ": IOCTL_MEM_ALLOCATE: {%d, %x, }\n", ap->Handle, ap->Size);
+						vcio_pr_debug("IOCTL_MEM_ALLOCATE: {%d, %x, }", ap->Handle, ap->Size);
 					}
-					mbox_copy_to_user((void*)ioctl_param, &p.out, sizeof p.out);
+					copy_to_user((void*)ioctl_param, &p.out, sizeof p.out);
 					break;
 				}
 
 				case IOCTL_MEM_RELEASE:
 				{
-					pr_debug(DRIVER_NAME ": IOCTL_MEM_RELEASE: %x\n", (unsigned)ioctl_param);
+					vcio_pr_debug("IOCTL_MEM_RELEASE: %x", (unsigned)ioctl_param);
 					pos = vcioa_locate(&data->Allocations, ioctl_param);
 					if (pos < 0)
 						rc = -EBADF;
@@ -936,8 +608,8 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				case IOCTL_MEM_LOCK:
 				{
 					unsigned param;
-					mbox_copy_from_user(&param, (void*)ioctl_param, sizeof param);
-					pr_debug(DRIVER_NAME ": IOCTL_MEM_LOCK %x\n", param);
+					copy_from_user(&param, (void*)ioctl_param, sizeof param);
+					vcio_pr_debug("IOCTL_MEM_LOCK %x", param);
 					pos = vcioa_locate(&data->Allocations, param);
 					if (pos < 0)
 						rc = -EBADF;
@@ -952,21 +624,21 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 						} else
 							ap->Location = param;
 					}
-					pr_debug(DRIVER_NAME ": IOCTL_MEM_LOCK: %x\n", param);
-					mbox_copy_to_user((void*)ioctl_param, &param, sizeof param);
+					vcio_pr_debug("IOCTL_MEM_LOCK: %x", param);
+					copy_to_user((void*)ioctl_param, &param, sizeof param);
 					break;
 				}
 
 				case IOCTL_MEM_UNLOCK:
 				{
-					pr_debug(DRIVER_NAME ": IOCTL_MEM_UNLOCK %x\n", (unsigned)ioctl_param);
+					vcio_pr_debug("IOCTL_MEM_UNLOCK %x", (unsigned)ioctl_param);
 					pos = vcioa_locate(&data->Allocations, ioctl_param);
 					if (pos < 0)
 						rc = -EBADF;
 					else
 					{	vcio_alloc* ap = data->Allocations.List + pos;
 						if (ap->Location == VCIOA_LOCATION_NONE)
-						{	pr_warning(DRIVER_NAME ": tried to unlock unlocked memory %d\n", ap->Handle);
+						{	vcio_pr_warn("tried to unlock unlocked memory %d", ap->Handle);
 							rc = -EPERM;
 						} else if (UnlockVcMemory(ap->Handle))
 							rc = -ENOMEM;
@@ -977,15 +649,15 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				}
 
 				case IOCTL_ENABLE_QPU:
-				{	pr_info(DRIVER_NAME ": IOCTL_ENABLE_QPU %x\n", ioctl_param);
+				{	vcio_pr_info("IOCTL_ENABLE_QPU %lx", ioctl_param);
 
 					break;
 				}
 
 				case IOCTL_EXEC_QPU:
 				{	vcio_exec_qpu p;
-					mbox_copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in);
-					pr_info(DRIVER_NAME ": IOCTL_EXEC_QPU %x, %x, %x, %x\n", p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout);
+					copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in);
+					vcio_pr_info("IOCTL_EXEC_QPU %x, %x, %x, %x", p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout);
 					/* verify starting point */
 					if (!vcioa_find_addr(&data->Allocations, p.in.control))
 					{	rc = -EACCES;
@@ -995,7 +667,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 						{	if (!vcioa_find_addr(&data->Allocations, ))
 								goto exec_fail;
 						}*/
-						if (bcm_execute_qpu(p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout))
+						if (ExecuteQpu(p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout))
 							rc = -ENOEXEC;
 					}
 					break;
@@ -1006,11 +678,11 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 		}
 	}
 fail:
-	pr_err(DRIVER_NAME "unknown ioctl: %d, minor = %d\n", ioctl_num, MINOR(f->f_inode->i_rdev));
+	vcio_pr_err("unknown ioctl: %d, minor = %d", ioctl_num, MINOR(f->f_inode->i_rdev));
 	return -EINVAL;
 }
 
-static struct vm_operations_struct vm_ops = {
+static const struct vm_operations_struct vm_ops = {
 /*    .open =  simple_vma_open,
     .close = simple_vma_close,*/
 #ifdef CONFIG_HAVE_IOREMAP_PROT
@@ -1030,7 +702,7 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 	 */
 	if ((vma->vm_flags & VM_WRITE) && !(vma->vm_flags & VM_SHARED))
 	{
-		pr_info(DRIVER_NAME ": writeable mappings must be shared, rejecting\n");
+		vcio_pr_info("writeable mappings must be shared, rejecting");
 		return -EINVAL;
 	}
 
@@ -1045,12 +717,12 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 		vca = vcioa_find_addr(&data->Allocations, start);
 		if (vca == NULL)
 		{
-			pr_info(DRIVER_NAME ": tried to map memory (%x) that is not allocated by this device.\n", start);
+			vcio_pr_info("tried to map memory (%x) that is not allocated by this device.", start);
 			return -EACCES;
 		}
 		if (((start + size -1) >> PAGE_SHIFT) > ((vca->Location + vca->Size -1) >> PAGE_SHIFT))
 		{
-			pr_info(DRIVER_NAME ": the memory region to map exceeds the allocated buffer (%x[%x] vs. %x[%x]).\n",
+			vcio_pr_info("the memory region to map exceeds the allocated buffer (%x[%x] vs. %x[%x]).",
 				start, size, vca->Location, vca->Size);
 			return -EACCES;
 		}
@@ -1069,7 +741,7 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 	rc = remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff, size, vma->vm_page_prot);
 	if (rc)
 	{
-		pr_warning(DRIVER_NAME ": remap page range failed with %d\n", rc);
+		vcio_pr_warn("remap page range failed with %d", rc);
 		return rc;
 	}
 
@@ -1092,20 +764,7 @@ struct file_operations fops = {
 	.mmap = device_mmap,
 };
 
-/** vcio character device id from cdev_add, non-zero if allocated. */
-static dev_t vcio_dev = 0;
-/** vcio character device, non-zero if allocated. */
-static struct cdev vcio_cdev0 = { };
-/** vcio character device, non-zero if allocated. */
-static struct cdev vcio_cdev1 = { };
-/** device class from class_create, non-zero if allocated. */
-static struct class *vcio_class = NULL;
-/** device vcio created by device_create, non-zero if allocated. */
-struct device *vcio_dev0 = NULL;
-/** device vcio1 created by device_create, non-zero if allocated. */
-struct device *vcio_dev1 = NULL;
-
-static int bcm_vcio_remove(struct platform_device *pdev)
+static int vcio_remove(struct platform_device *pdev)
 {
 #ifndef BCM_VCIO2_ADD
 	struct vc_mailbox *mailbox;
@@ -1152,9 +811,11 @@ static int bcm_vcio_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int bcm_vcio_probe(struct platform_device *pdev)
+static int vcio_probe(struct platform_device *pdev)
 {
 	int ret = 0;
+	vcio_pdev = &pdev->dev;
+
 #ifndef BCM_VCIO2_ADD
 	struct vc_mailbox *mailbox;
 	struct resource *res;
@@ -1183,12 +844,21 @@ static int bcm_vcio_probe(struct platform_device *pdev)
 				 __io_address(ARM_0_MAIL0_RD));
 #endif
 
+	struct device_node *np;
+	np = of_find_compatible_node(NULL, NULL, "raspberrypi,bcm2835-firmware");
+	if (!of_device_is_available(np))
+		return -ENODEV;
+
+	firmware = rpi_firmware_get(np);
+	if (!firmware)
+		return -ENODEV;
+
 	//pr_info(DRIVER_NAME ": 1\n");
 
 	/* Register the character device */
 	ret = alloc_chrdev_region(&vcio_dev, 0, 2, DEVICE_FILE_NAME);
 	if (ret < 0) {
-		pr_err(DRIVER_NAME ": Failed registering the character device %d\n", ret);
+		vcio_pr_err("Failed registering the character device %d", ret);
 		vcio_dev = 0;
 		goto fail;
 	}
@@ -1199,7 +869,7 @@ static int bcm_vcio_probe(struct platform_device *pdev)
 	vcio_cdev0.owner = THIS_MODULE;
 	ret = cdev_add(&vcio_cdev0, vcio_dev, 1);
 	if (ret < 0) {
-		pr_err(DRIVER_NAME " %s: Unable to add device (rc=%d)", __func__, ret);
+		vcio_pr_err("%s: Unable to add device (rc=%d)", __func__, ret);
 		memset(&vcio_cdev0, 0, sizeof vcio_cdev0);
 		goto fail;
 	}
@@ -1208,7 +878,7 @@ static int bcm_vcio_probe(struct platform_device *pdev)
 	vcio_cdev1.owner = THIS_MODULE;
 	ret = cdev_add(&vcio_cdev1, vcio_dev+1, 1);
 	if (ret < 0) {
-		pr_err(DRIVER_NAME " %s: Unable to add device (rc=%d)", __func__, ret);
+		vcio_pr_err("%s: Unable to add device (rc=%d)", __func__, ret);
 		memset(&vcio_cdev1, 0, sizeof vcio_cdev1);
 		goto fail;
 	}
@@ -1218,7 +888,7 @@ static int bcm_vcio_probe(struct platform_device *pdev)
 	vcio_class = class_create(THIS_MODULE, DRIVER_NAME);
 	if (IS_ERR(vcio_class)) {
 		ret = PTR_ERR(vcio_class);
-		pr_err(DRIVER_NAME " %s: class_create failed (rc=%d)\n", __func__, ret);
+		vcio_pr_err("%s: class_create failed (rc=%d)\n", __func__, ret);
 		vcio_class = NULL;
 		goto fail;
 	}
@@ -1226,14 +896,14 @@ static int bcm_vcio_probe(struct platform_device *pdev)
 	vcio_dev0 = device_create(vcio_class, NULL, vcio_dev, NULL, "vcio");
 	if (IS_ERR(vcio_dev0)) {
 		ret = PTR_ERR(vcio_dev0);
-		pr_err(DRIVER_NAME " %s: device_create failed (rc=%d)\n", __func__, ret);
+		vcio_pr_err("%s: device_create failed (rc=%d)\n", __func__, ret);
 		vcio_dev0 = NULL;
 		goto fail;
 	}
 	vcio_dev1 = device_create(vcio_class, NULL, vcio_dev+1, NULL, "vcio2");
 	if (IS_ERR(vcio_dev1)) {
 		ret = PTR_ERR(vcio_dev1);
-		pr_err(DRIVER_NAME " %s: device_create failed (rc=%d)\n", __func__, ret);
+		vcio_pr_err("%s: device_create failed (rc=%d)\n", __func__, ret);
 		vcio_dev1 = NULL;
 		goto fail;
 	}
@@ -1242,14 +912,14 @@ static int bcm_vcio_probe(struct platform_device *pdev)
 	return 0;
 
  fail:
-	bcm_vcio_remove(pdev);
+	vcio_remove(pdev);
 
 	return ret;
 }
 
-static struct platform_driver bcm_mbox_driver = {
-	.probe = bcm_vcio_probe,
-	.remove = bcm_vcio_remove,
+static struct platform_driver vcio_driver = {
+	.probe = vcio_probe,
+	.remove = vcio_remove,
 
 	.driver = {
 		.name = DRIVER_NAME,
@@ -1257,41 +927,41 @@ static struct platform_driver bcm_mbox_driver = {
 	},
 };
 
-static int __init bcm_mbox_init(void)
+static int __init vcio_init(void)
 {
 	int ret;
 
-	printk(KERN_INFO "mailbox: enhanced Broadcom VideoCore Mailbox driver\n");
+	vcio_pr_info("Enhanced Broadcom VideoCore Mailbox driver");
 
 #ifndef BCM_VCIO2_ADD
-	ret = platform_driver_register(&bcm_mbox_driver);
+	ret = platform_driver_register(&vcio_driver);
 	if (ret != 0) {
 		printk(KERN_ERR DRIVER_NAME ": failed to register on platform\n");
 	}
 #else
-	bcm_vcio_probe(NULL);
+	vcio_probe(NULL);
 #endif
 
 	return ret;
 }
 
-static void __exit bcm_mbox_exit(void)
+static void __exit vcio_exit(void)
 {
 #ifndef BCM_VCIO2_ADD
-	platform_driver_unregister(&bcm_mbox_driver);
+	platform_driver_unregister(&vcio_driver);
 #else
-	bcm_vcio_remove(NULL);
+	vcio_remove(NULL);
 #endif
 }
 
 #if BCM_VCIO2_ADD
-module_init(bcm_mbox_init);
+module_init(vcio_init);
 #else
-arch_initcall(bcm_mbox_init);	/* Initialize early */
+arch_initcall(vcio_init);	/* Initialize early */
 #endif
-module_exit(bcm_mbox_exit);
+module_exit(vcio_exit);
 
-MODULE_AUTHOR("Gray Girling, Marcel Mueller");
-MODULE_DESCRIPTION("ARM I/O to VideoCore processor");
+MODULE_AUTHOR("Marcel Müller");
+MODULE_DESCRIPTION("ARM access to VideoCore processor");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:bcm-mbox");
+//MODULE_ALIAS("platform:bcm-mbox");

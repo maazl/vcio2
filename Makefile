@@ -1,9 +1,9 @@
-srcdir = $(shell pwd)/..
+srcdir = $(shell pwd)
 module = vcio2
-version = 0.1
+version = 0.2
 
-install: build
-	dkms --sourcetree $(srcdir) install $(module)/$(version)
+install:
+	dkms install $(srcdir)
 	modprobe vcio2
 
 remove:
@@ -11,10 +11,11 @@ remove:
 	dkms remove $(module)/$(version) --all
 
 build:
-	-dkms --sourcetree $(srcdir) add $(module)/$(version)
-	dkms --sourcetree $(srcdir) build $(module)/$(version)
+	-dkms add $(srcdir)
+	dkms build $(module)/$(version)
 
 obj-m = src/vcio2.o
+ccflags-y := -I$(PWD)/include
 
 all:
 	make -C /lib/modules/${kernelver}/build M=$(PWD)/src

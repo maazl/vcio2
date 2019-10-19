@@ -36,7 +36,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 
-#include "../mach/vcio2.h"
+#include <soc/bcm2835/vcio2.h>
 
 #include "mailbox.h"
 
@@ -142,6 +142,11 @@ unsigned execute_qpu(int file_desc, unsigned num_qpus, unsigned control, unsigne
 	{	printf("execute_qpu failed: %d\n", ret_val);
 	}
 	return ret_val;
+}
+
+unsigned qpu_enable(int file_desc, unsigned enable)
+{
+	return 0;
 }
 
 int mbox_open()
