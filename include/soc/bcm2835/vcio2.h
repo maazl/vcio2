@@ -1,8 +1,13 @@
 #ifndef _MACH_BCM2708_VCIO2_H
 #define _MACH_BCM2708_VCIO2_H
 
+#ifdef __KERNEL__
 #include <linux/ioctl.h>
 #include <linux/types.h>
+#else
+#include <sys/ioctl.h>
+#include <stdint.h>
+#endif
 
 #define IOCTL_VCIO2_TYPE 101
 

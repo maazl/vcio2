@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2012, Broadcom Europe Ltd.
+Copyright (c) 2019, Marcel Müller
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -23,6 +23,10 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
 ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+Replacement for mailbox.c of hello_fft.
+Switches to the vcio2 driver that does not require root access.
 */
 
 #include <stdio.h>
@@ -42,38 +46,31 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define PAGE_SIZE (4*1024)
 
-void *mapmem(int file_desc, unsigned base, unsigned size)
+void *mapmem(int file_desc, uint32_t base, uint32_t size)
 {
-	printf("mapmem(%d, %x, %x)\n", file_desc, base, size);
-	unsigned offset = base % PAGE_SIZE;
+	uint32_t offset = base % PAGE_SIZE;
 	base = base - offset;
-	void *mem = mmap(
-		0,
-		size,
-		PROT_READ|PROT_WRITE,
-		MAP_SHARED/*|MAP_FIXED*/,
-		file_desc,
-		base);
-#ifdef DEBUG
+	void *mem = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_SHARED, file_desc, base);
+	#ifdef DEBUG
 	printf("base=0x%x, mem=%p\n", base, mem);
-#endif
-	if (mem == MAP_FAILED) {
-		printf("mmap error: %s\n", strerror(errno));
+	#endif
+	if (mem == MAP_FAILED)
+	{	printf("mmap error: %s\n", strerror(errno));
 		return NULL;
 	}
 	return (char *)mem + offset;
 }
 
-void unmapmem(void *addr, unsigned size)
+void unmapmem(void *addr, uint32_t size)
 {
 	int s = munmap(addr, size);
-	if (s != 0) {
-		printf("munmap error %d\n", s);
+	if (s != 0)
+	{	printf("munmap error %d\n", s);
 		exit (-1);
 	}
 }
 
-unsigned mem_alloc(int file_desc, unsigned size, unsigned align, unsigned flags)
+uint32_t mem_alloc(int file_desc, uint32_t size, uint32_t align, uint32_t flags)
 {
 	vcio_mem_allocate buf;
 	int ret_val;
@@ -92,7 +89,7 @@ unsigned mem_alloc(int file_desc, unsigned size, unsigned align, unsigned flags)
 	return buf.out.handle;
 }
 
-unsigned mem_free(int file_desc, unsigned handle)
+uint32_t mem_free(int file_desc, uint32_t handle)
 {
 	int ret_val = ioctl(file_desc, IOCTL_MEM_RELEASE, handle);
 	if (ret_val)
@@ -100,7 +97,7 @@ unsigned mem_free(int file_desc, unsigned handle)
 	return ret_val;
 }
 
-unsigned mem_lock(int file_desc, unsigned handle)
+uint32_t mem_lock(int file_desc, uint32_t handle)
 {
 	int ret_val = ioctl(file_desc, IOCTL_MEM_LOCK, &handle);
 	if (ret_val)
@@ -110,7 +107,7 @@ unsigned mem_lock(int file_desc, unsigned handle)
 	return handle;
 }
 
-unsigned mem_unlock(int file_desc, unsigned handle)
+uint32_t mem_unlock(int file_desc, uint32_t handle)
 {
 	int ret_val = ioctl(file_desc, IOCTL_MEM_UNLOCK, handle);
 	if (ret_val)
@@ -118,14 +115,7 @@ unsigned mem_unlock(int file_desc, unsigned handle)
 	return ret_val;
 }
 
-/* TODO: not implemented
-unsigned execute_code(int file_desc, unsigned code, unsigned r0, unsigned r1, unsigned r2, unsigned r3, unsigned r4, unsigned r5)
-{
-	printf("execute_code not implemented\n");
-	return -1;
-}*/
-
-unsigned execute_qpu(int file_desc, unsigned num_qpus, unsigned control, unsigned noflush, unsigned timeout)
+uint32_t execute_qpu(int file_desc, uint32_t num_qpus, uint32_t control, uint32_t noflush, uint32_t timeout)
 {
 	vcio_exec_qpu buf;
 	int ret_val;
@@ -141,7 +131,7 @@ unsigned execute_qpu(int file_desc, unsigned num_qpus, unsigned control, unsigne
 	return ret_val;
 }
 
-unsigned qpu_enable(int file_desc, unsigned enable)
+unsigned qpu_enable(int file_desc, uint32_t enable)
 {
 	int ret_val = ioctl(file_desc, IOCTL_ENABLE_QPU, enable);
 	if (ret_val)

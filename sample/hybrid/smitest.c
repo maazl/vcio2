@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 #include "mailbox.h"
-#include "shader.h"
+#include "../shader.h"
 
 #define VEC_COUNT 3*16
 #define GPU_MEM_FLG 0xC // cached=0xC; direct=0x4
@@ -21,7 +21,7 @@ static const int input[VEC_COUNT*2] =
 
 static const unsigned input2[] =
 {
-	#include "numbers.hex"
+	#include "../numbers.hex"
 };
 
 static const char op[RES_COUNT][8] =
