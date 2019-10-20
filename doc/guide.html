@@ -34,7 +34,8 @@
       vcio2:</p>
     <ol>
       <li>Copy <tt>include/soc/bcm2835/vcio2.h</tt> to your source files.</li>
-      <li>Replace the files <tt>mailbox.h</tt> and <tt>mailbox.c</tt> with the ones from the <tt>sample</tt> directory.</li>
+      <li>Replace the files <tt>mailbox.h</tt> and <tt>mailbox.c</tt> with the ones from the <tt>sample/porting</tt> or <tt>sample/hybrid</tt>
+        directory depending on whether you want to run on installations without the vcio2 driver as well.</li>
       <li>Adjust include path of <tt>vcio2.h</tt> in <tt>mailbox.c</tt>.</li>
       <li>Add an additional first parameter with the device handle returned from <tt>mbox_open</tt> to any call to <tt>mapmem</tt>.</li>
       <li>Compile and run.</li>
@@ -56,14 +57,16 @@
     <h2><a id="sample" name="sample"></a>Sample application</h2>
     <p>In the sample folder there is a simple sample application that utilizes the vcio2 device. It does some stupid computations by
       applying all available QPU operators to a bunch of constants.</p>
-    <h3>How to build</h3>
+    <h3>How to build and run</h3>
     <ul>
-      <li>Enter the directory sample.</li>
+      <li>Enter one of the sample directories, <tt>sample/porting</tt> or <tt>sample/hybrid</tt>.</li>
       <li>Type <tt>make</tt></li>
       <li>Run <tt>./smitest</tt></li>
     </ul>
     <p>Now the test application should print some pages of results to the console. Of course, you need to <a href="index.html#install">install
         the vcio2 driver</a> before.</p>
+    <p>In case you have chosen the <tt>hybrid</tt> directory the application may run without the vcio2 driver installed as well.
+      But you must run it as root in this case.</p>
     <p><var></var></p>
   </body>
 </html>
