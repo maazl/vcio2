@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta http-equiv="content-type" content="text/html; charset=windows-1252">
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
     <title>vcio2 - Kernel driver to access Raspberry Pi VideoCore IV GPU without root privileges</title>
-    <meta content="Marcel M�ller" name="author">
+    <meta content="Marcel Müller" name="author">
     <meta content="Raspberry Pi BCM2835 BCM2708 QPU DKMS vcio" name="keywords">
     <link rel="stylesheet" href="infstyle.css" type="text/css">
   </head>
@@ -13,12 +13,13 @@
       with the built-in vcio driver in the RPi kernel you need to have root privileges for every application.<br>
       The goal of the vcio2 driver is to come around this restriction. Furthermore vcio2 keeps track of the resources and performs
       some clean-up if the application is interrupted.</p>
-    <p><a class="nobr" href="#features">&#9660; Features &amp; Limitations</a>, <a class="nobr" href="#install">&#9660; Installation
-        instructions</a>, <a class="nobr" href="#usage">&#9660; Using the driver</a>, <a class="nobr" href="guide.html#sample">&#9654; Sample
-        code</a>, <a class="nobr" href="guide.html">&#9654; Programming guide</a>, <a class="nobr" href="APIref.html">&#9654; API reference</a>,
-      <a class="nobr" href="#contact">&#9660; Contact</a></p>
+    <p><a class="nobr" href="#features">▼ Features &amp; Limitations</a>, <a class="nobr" href="#install">▼ Installation
+        instructions</a>, <a class="nobr" href="#usage">▼ Using the driver</a>, <a class="nobr" href="guide.html#sample">▶ Sample
+        code</a>, <a class="nobr" href="guide.html">▶ Programming guide</a>, <a class="nobr" href="APIref.html">▶ API reference</a>,
+      <a class="nobr" href="#contact">▼ Contact</a></p>
     <h2><a name="download"></a>Download &amp; history</h2>
-    <p>Download <a href="../vcio2.tar.bz2">DKMS kernel module, an example and this documentation</a></p>
+    <p>Download <a href="../vcio2.tar.bz2">DKMS kernel module, an example and this documentation</a> or view <a href="https://github.com/maazl/vcio2">source
+        code @ github</a></p>
     <dl>
       <dt>V0.2</dt>
       <dd>Rewrote the driver to support newer RPi kernels.</dd>
@@ -54,8 +55,6 @@
       <li> Implement some higher level functions that do memory allocations, locking and mapping in one step.</li>
       <li>Provide functions to access the performance counters.</li>
     </ul>
-    <ul>
-    </ul>
     <h2><a name="install"></a>Installation instructions</h2>
     <h3>Prerequisites</h3>
     <ul>
@@ -67,8 +66,6 @@
     <ul>
       <li>Copy the file <tt>extra/10-vcio2.rules</tt> to <tt>/etc/udev/rules.d</tt>.<br>
         This will grant access to the <tt>/dev/vcio2</tt> device to members of the <tt>video</tt> group.</li>
-    </ul>
-    <ul>
     </ul>
     <h3>Build and install the driver</h3>
     <ul>
