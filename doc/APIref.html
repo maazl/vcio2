@@ -23,7 +23,7 @@
     <pre>close(vcio2);</pre>
     <p>Close the vcio2 device and release all resources.</p>
     <h2><a id="IOCTL" name="IOCTL"></a>vcio2 IOCTLs</h2>
-    <h3><tt><a id="IOCTL_MEM_ALLOC" name="IOCTL_MEM_ALLOC"></a>IOCTL_MEM_ALLOCATE (0xC00C6501) </tt></h3>
+    <h3><tt><a id="IOCTL_MEM_ALLOC" name="IOCTL_MEM_ALLOC"></a>IOCTL_MEM_ALLOCATE (0xC00C650c) </tt></h3>
     <p>Allocate GPU memory. The memory is continuous in physical address and taken from the reserved GPU memory pool.</p>
     <pre>typedef struct
 { union {
@@ -42,7 +42,7 @@
         Note that with CMA enabled (dynamic GPU memory size) in <tt>/boot/config.txt</tt> allocations of more than 16 MiB seem to
         fail.</dd>
       <dt><tt>in.alignment</tt></dt>
-      <dd>Alignment of the resulting buffer in physical memory.</dd>
+      <dd>Alignment of the resulting buffer in physical memory. 4096 (the page size) is strongly recommended.</dd>
       <dt><tt>in.flags</tt></dt>
       <dd><tt>0xC</tt> &#8658; cached; <tt>0x4</tt> &#8658; direct<br>
         Other flags unknown. The parameter is directly passed to the <tt>VCMSG_SET_ALLOCATE_MEM</tt> mailbox message.</dd>
@@ -53,7 +53,7 @@
     </dl>
     <p>vcio2 keeps track of the allocated memory chunks. As soon as the vcio2 device is closed or the application terminates. The
       memory is given back to the GPU memory pool. So remember to keep the device open!</p>
-    <h3><tt><a id="IOCTL_MEM_RELEASE" name="IOCTL_MEM_RELEASE"></a>IOCTL_MEM_RELEASE (0x00006502)</tt></h3>
+    <h3><tt><a id="IOCTL_MEM_RELEASE" name="IOCTL_MEM_RELEASE"></a>IOCTL_MEM_RELEASE (0x0000650d)</tt></h3>
     <pre>int retval = ioctl(vcio2, IOCTL_MEM_RELEASE, handle);</pre>
     <p>Release GPU memory. This also unlocks the memory segment if still locked.</p>
     <dl>
@@ -62,7 +62,7 @@
       <dt>return value</dt>
       <dd><tt>0</tt> &#8658; success; any other value &#8658; error. See <tt>errno</tt>.</dd>
     </dl>
-    <h3><tt><a id="IOCTL_MEM_LOCK" name="IOCTL_MEM_LOCK"></a>IOCTL_MEM_LOCK (0xC0046503)</tt></h3>
+    <h3><tt><a id="IOCTL_MEM_LOCK" name="IOCTL_MEM_LOCK"></a>IOCTL_MEM_LOCK (0xC004650e)</tt></h3>
     <pre>int addr = handle;<br>int retval = ioctl(vcio2, IOCTL_MEM_LOCK, &amp;addr);</pre>
     <p>Lock the memory segment at a physical address.</p>
     <dl>
@@ -73,7 +73,7 @@
       <dt><tt>addr</tt></dt>
       <dd>Physical memory address where the memory segment has been locked.</dd>
     </dl>
-    <h3><tt><a id="IOCTL_MEM_UNLOCK" name="IOCTL_MEM_UNLOCK"></a>IOCTL_MEM_UNLOCK (0x00006504) </tt></h3>
+    <h3><tt><a id="IOCTL_MEM_UNLOCK" name="IOCTL_MEM_UNLOCK"></a>IOCTL_MEM_UNLOCK (0x0000650f) </tt></h3>
     <pre>int retval = ioctl(vcio2, IOCTL_MEM_UNLOCK, handle);
 </pre>
     <p>Unlock memory segment and release the binding to a physical address.</p>
@@ -83,6 +83,37 @@
       <dt>return value</dt>
       <dd><tt>0</tt> &#8658; success; any other value = error. See <tt>errno</tt>.</dd>
     </dl>
+    <h3><tt><a name="IOCTL_MEM_QUERY" id="IOCTL_MEM_QUERY"></a>IOCTL_MEM_QUERY (0xc0010658f)</tt></h3>
+    <p>Query information about a memory allocation.</p>
+    <pre>typedef struct
+{ unsigned int handle;<br>  unsigned int bus_addr;<br>  void*        virt_addr;<br>  unsigned int size;
+} vcio_mem_query;<br><br>vcio_mem_query buf;<br>...<br>int retval = ioctl(vcio2, IOCTL_MEM_QUERY, &amp;buf);</pre>
+    <dl>
+      <dt><tt>handle</tt></dt>
+      <dd>Memory handle from <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>.</dd>
+      <dt><tt>bus_addr</tt></dt>
+      <dd>Physical memory address.</dd>
+      <dt><tt>virt_addr</tt></dt>
+      <dd>Virtual memory address in user space.</dd>
+      <dt><tt>size</tt></dt>
+      <dd>Size of the memory segment.</dd>
+      <dt>return value</dt>
+      <dd><tt>0</tt> &#8658; success; any other value = error. See <tt>errno</tt>.</dd>
+    </dl>
+    <p>All fields in <tt>vcio_mem_query</tt> are optional on input. Simply leave the unneeded fields zero. The driver will fill all
+      missing values on successful return. At least one of <tt>handle</tt>, <tt>bus_addr</tt> or <tt>virt_addr</tt> should be
+      filled or you will get <tt>EINVAL</tt>. <tt>EINVAL</tt> is also returned when the supplied address or handle does not belong
+      to an memory allocation made via the same device file handle.</p>
+    <p>You may also pass a memory address from within an allocated area. In this case the driver will change the address to the
+      beginning of the area. This applies to <tt>bus_addr</tt> and <tt>virt_addr</tt> as well.<br>
+      I.e. the driver will never return partial memory segments. But it depends on the kind of the query what is considered a memory
+      segment. If you ask for a virtual address you may get smaller chunks because virtual address mappings could cover only a part
+      of an allocated memory segment. In this case the returned <tt>bus_addr</tt> may not match the start of the returned <tt>handle</tt>
+      but will match the returned start of <tt>virt_addr</tt> instead.</p>
+    <p>If you specify <tt>size</tt> on input the entire range from the start address must be within the same memory segment,
+      otherwise the driver returns <tt>EINVAL</tt>. This could be used to verify if an address range is valid.<br>
+      The same applies if you supply multiple fields, e.g. <tt>handle</tt> and <tt>bus_addr</tt>. If they do not match you'll get
+      <tt>EINVAL</tt>.</p>
     <h3><tt><a id="IOCTL_ENABLE_QPU" name="IOCTL_EXEC_QPU"></a>IOCTL_ENABLE_QPU (0x00006512)</tt></h3>
     <p>Power on/off the GPU.</p>
     <pre>int retval = ioctl(vcio2, IOCTL_ENABLE_GPU, flag);</pre>
@@ -135,27 +166,76 @@
     <p>If the QPU is not yet powered on, the power will be turned on automatically before this request. The power will not be turned
       off afterwards unless the device is closed or you explicitly request it by <tt><a href="#IOCTL_ENABLE_QPU">IOCTL_ENABLE_QPU</a>
         0</tt> and of course no other process needs QPU power.</p>
+    <h3><tt><a id="IOCTL_EXEC_QPU" name="IOCTL_EXEC_QPU"></a>IOCTL_EXEC_QPU2 (0x40106591)</tt></h3>
+    <p>Execute QPU code. This is the same than <a href="#IOCTL_EXEC_QPU"><tt>IOCTL_EXEC_QPU</tt></a> but it take <em>strongly
+        typed user space address pointers</em> rather than bus addresses.</p>
+    <pre>typedef struct
+{ uint32_t* uniforms;
+  uint64_t* code;
+} vcio_exec_qpu2_entry;<br>typedef struct
+{ struct
+  { uint32_t num_qpus;
+    vcio_exec_qpu2_entry* control;
+    uint32_t noflush;
+    uint32_t timeout;
+  } in;
+} vcio_exec_qpu2;
+<br>vcio_exec_qpu2 buf;<br>...<br>int retval = ioctl(vcio2, IOCTL_EXEC_QPU2, &amp;buf);</pre>
+    <dl>
+      <dt><tt>num_qpus</tt></dt>
+      <dd>Number of QPUs that should be kicked off. Each QPU receives their own shader code and their own set of uniforms. So this
+        is also the size of the <tt>control</tt> array.</dd>
+      <dt><tt>control</tt></dt>
+      <dd>This is a pointer to an array of <tt>vcio_qpu_entry2</tt> structures with exactly <tt>num_qpus</tt> elements. Each
+        element must contain the start address of the uniforms and the code for each QPU. While all of these pointers are user space
+        virtual addresses <em>the uniforms and the code pointers must be from a memory mapping done by this driver file handle</em>
+        or you will get <tt>EACCES</tt>. There is no need that the <tt>vcio_qpu_entry2</tt> structures reside in GPU memory.</dd>
+      <dt><tt>noflush</tt></dt>
+      <dd>Flag: do not flush the cache before starting the QPU code.</dd>
+      <dt><tt>timeout</tt></dt>
+      <dd>Timeout in milliseconds to wait for an host interrupt. If the timeout elapses the function returns with an error. Note
+        that this will not stop the QPU code so far.</dd>
+      <dt>return value</dt>
+      <dd><tt>0</tt> in case of success; non-zero otherwise, see <tt>errno</tt>. You will get <tt>EACCES</tt> when one of the
+        memory pointers do not belong to a locked memory segment allocated by the same device file handle.</dd>
+    </dl>
+    <p>Although vcio2 does some basic checks to prevent accidental access to invalid memory <em>it cannot check for memory access
+        done by the QPU code</em>. So you have to take care to execute only valid QPU code, otherwise the Raspberry might crash.
+      However, in most cases the Raspi will recover from faults after the timeout and no resources will be lost. So GPU development
+      is significantly relaxed.</p>
+    <p>While QPU code is executing the Raspi kernel can no longer access the the property channel used for several other purposes,
+      e.g. power management or several firmware calls. Every attempt to do such a function is blocked until the QPU code raises an
+      host interrupt or the timeout elapsed. This is a restriction of the firmware rather than vcio2.</p>
+    <p>If the QPU is not yet powered on, the power will be turned on automatically before this request. The power will not be turned
+      off afterwards unless the device is closed or you explicitly request it by <tt><a href="#IOCTL_ENABLE_QPU">IOCTL_ENABLE_QPU</a>
+        0</tt> and of course no other process needs QPU power.</p>
     <dl>
     </dl>
     <h2><a id="mmap" name="mmap"></a>Memory mapping</h2>
     <p>To be able to access the QPU memory from the ARM cortex you will need map the memory into you physical address space. Simply
       use <tt>mmap</tt> with the vcio2 device handle for this purpose.</p>
-    <pre>unsigned offset = base &amp; 0xFFF;<br>char *mem = mmap(0, size + offset, PROT_READ|PROT_WRITE, MAP_SHARED, vcio2, base - offset);<br>if (mem != MAP_ERROR)<br>  mem += offset;</pre>
+    <pre>char *mem = mmap(0, size, PROT_READ|PROT_WRITE, MAP_SHARED, vcio2, base);</pre>
     <dl>
+      <dt><tt>vcio2</tt></dt>
+      <dd>File handle from <a href="#open"><tt>open</tt></a>.</dd>
       <dt><tt>base</tt></dt>
-      <dd>Physical address of the memory block from <a href="#IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.<br>
-        Note that <tt>mmap</tt> requires base to be aligned at a pages boundary (4092 bytes). Therefore the bit mask.</dd>
+      <dd>Physical address of the memory block from <a href="#IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a> or <tt>0</tt> to
+        allocate new memory.<br>
+        Note that <tt>mmap</tt> requires base to be aligned at a pages boundary (4092 bytes).</dd>
       <dt><tt>size</tt></dt>
-      <dd>Number of bytes to map. This should be the same than the size passed to <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>.</dd>
+      <dd>Number of bytes to map. This should be the same than the size passed to <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>
+        unless you passed <tt>0</tt> for <tt>base</tt>.</dd>
       <dt>return value <tt>mem</tt></dt>
       <dd>Virtual address of the mapped memory or <tt>MAP_FAILED</tt> on error.</dd>
       <dt><tt>mem + offset</tt></dt>
       <dd>Virtual address of the GPU memory to be used by the ARM core.</dd>
     </dl>
-    <p>If the GPU memory is allocated with at least 4k alignment the offset calculations could be dropped since <tt>offset</tt> is
-      always zero.</p>
     <p>vcio2 validates the memory mappings. I.e. you can only map memory that has been previously allocated with the same device
       handle. Otherwise you get an <tt>EACCES</tt> error.</p>
+    <h3>Automatic allocation</h3>
+    <p>If you <em>pass <tt>0</tt> for <tt>base</tt> the <tt>mmap</tt> call</em> will do all required tasks to allocate memory at
+      once, i.e. allocate, lock and map to user space.</p>
+    <p>For uniforms you usually also need the bus address of the memory.</p>
     <var></var>
   </body>
 </html>
