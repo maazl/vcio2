@@ -61,11 +61,6 @@
       <li>Install <b>Linux kernel headers</b>. (<tt>sudo apt-get install</tt><tt> raspberrypi-kernel-headers</tt>)</li>
       <li>In fact I only tested with kernel <tt>4.19</tt> so far but it is likely to work with other kernels too.</li>
     </ul>
-    <h3>Driver permissions</h3>
-    <ul>
-      <li>Copy the file <tt>extra/10-vcio2.rules</tt> to <tt>/etc/udev/rules.d</tt>.<br>
-        This will grant access to the <tt>/dev/vcio2</tt> device to members of the <tt>video</tt> group.</li>
-    </ul>
     <h3>Build and install the driver</h3>
     <ul>
       <li>Unpack the <a href="#download">package</a> above to some folder.</li>
@@ -74,7 +69,7 @@
       <li><tt>sudo make install</tt></li>
     </ul>
     <p>Normally this should build the kernel module using DKMS, install it for the currently running kernel, setup the driver for
-      autostart and load the driver. So you are ready to use immediately.</p>
+      autostart, load the driver and grant access to the group <tt>video</tt>. So you are ready to use immediately.</p>
     <p>If it does not work, have a look at the error messages on the screen as well as <tt>/var/dkms/vcio2/0.2/build/make.log</tt>
       (compilation) and <tt>/var/log/syslog</tt> (loading).</p>
     <h3>Using the driver</h3>

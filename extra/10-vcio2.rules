@@ -1,1 +1,0 @@
-SUBSYSTEM=="vcio2", GROUP="video", MODE="0660"

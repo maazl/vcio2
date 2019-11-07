@@ -5,8 +5,11 @@ version = 0.2
 install:
 	dkms install $(srcdir)
 	modprobe vcio2
+	cp $(srcdir)/extra/udev/rules.d/10-vcio2.rules /etc/udev/rules.d/
+	cp $(srcdir)/extra/modules-load.d/10-vcio2.conf /etc/modules-load.d/
 
 remove:
+	-rm /etc/modules-load.d/10-vcio2.conf
 	-modprobe -r vcio2
 	dkms remove $(module)/$(version) --all
 

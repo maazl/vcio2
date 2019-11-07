@@ -975,6 +975,7 @@ static void __exit vcio_exit(void)
 
 #if BCM_VCIO2_ADD
 module_init(vcio_init);
+MODULE_SOFTDEP("pre: vcio");
 #else
 arch_initcall(vcio_init);	/* Initialize early */
 #endif

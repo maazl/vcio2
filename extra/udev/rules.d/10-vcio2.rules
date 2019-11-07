@@ -1,0 +1,2 @@
+# grant access to vcio2 device to the group video
+SUBSYSTEM=="vcio2", GROUP="video", MODE="0660"
