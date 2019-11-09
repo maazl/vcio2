@@ -33,15 +33,19 @@
     <p>If you have an application that uses the old vcio driver, e.g. hello_fft, you need to do the following steps to migrate to
       vcio2:</p>
     <ol>
-      <li>Copy <tt>include/soc/bcm2835/vcio2.h</tt> to your source files.</li>
-      <li>Replace the files <tt>mailbox.h</tt> and <tt>mailbox.c</tt> with the ones from the <tt>sample/porting</tt> or <tt>sample/hybrid</tt>
-        directory depending on whether you want to run on installations without the vcio2 driver as well.</li>
-      <li>Adjust include path of <tt>vcio2.h</tt> in <tt>mailbox.c</tt>.</li>
-      <li>Add an additional first parameter with the device handle returned from <tt>mbox_open</tt> to any call to <tt>mapmem</tt>.</li>
-      <li>Compile and run.</li>
+      <li><b>Copy <tt>include/soc/bcm2835/vcio2.h</tt></b> to your source files.</li>
+      <li><b>Replace</b> the files <b><tt>mailbox.h</tt> and <tt>mailbox.c</tt></b> with the ones from the <tt>sample/porting</tt>
+        or <tt>sample/hybrid</tt> directory depending on whether you want to run on installations without the vcio2 driver as well.</li>
+      <li><b>Adjust include path of <tt>vcio2.h</tt></b> in <tt>mailbox.c</tt>.</li>
+      <li><b>Add an additional first parameter</b> with the device handle returned from <tt>mbox_open</tt> <b>to any call to <tt>mapmem</tt></b>.</li>
+      <li><b>Compile and run</b>.</li>
     </ol>
     <p>Now you application should use the new kernel driver it does no longer require root privileges to run if you grant access to
       <tt>/dev/vcio2</tt>.</p>
+    <p>Some applications (including <tt>hello_fft</tt>) <b>access the Videocore IV control registers directly</b> for faster
+      access. <em>This is not supported by vcio2</em> and it will never be. It is strongly recommended not to do so because this
+      raises <i>serious race conditions</i> in multitasking environment. You need to refactor the code to always use the vcio2
+      driver for GPU access.</p>
     <h2><a id="concurrent" name="concurrent"></a>Using vcio2 concurrently</h2>
     <p>The vcio2 device may be opened as often as you like. The only limiting factor is the amount of GPU memory available.</p>
     <p>Calls to<tt> <a href="APIref.html#IOCTL_EXEC_QPU">IOCTL_EXEC_QPU</a></tt> are strictly serialized. So no two applications

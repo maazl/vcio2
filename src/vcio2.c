@@ -35,6 +35,7 @@
 #include <linux/module.h>
 #include <linux/uaccess.h>
 #include <linux/dma-mapping.h>
+#include <linux/broadcom/vc_mem.h>
 #include <soc/bcm2835/raspberrypi-firmware.h>
 #include <soc/bcm2835/vcio2.h>
 
@@ -68,6 +69,8 @@ static struct device *vcio_dev1 = NULL;
 /// root pointer for rpi_firmware API
 static struct rpi_firmware *firmware = NULL;
 
+/// 1 if Pi is Model 1, i.e. BCM2835
+static char vcio_model1;
 /// synchronize access to the following working set.
 struct mutex vcio_lock;
 /// Is the QPU enabled now? Number of requesting clients.
@@ -77,16 +80,42 @@ static unsigned vcio_enabled_count = 0;
 #define mailbox_property(tag) rpi_firmware_property_list(firmware, &tag, sizeof (tag));
 
 
+static uint32_t GetBoardRevision(void)
+{
+	struct vc_tag
+	{
+		uint32_t m_tagId;
+		uint32_t m_bufSize;
+		uint32_t m_dataSize;
+
+		uint32_t m_model;
+	} tag;
+	int s;
+
+	//fill in the tag for the allocation command
+	tag.m_tagId = RPI_FIRMWARE_GET_BOARD_REVISION;
+	tag.m_bufSize = 4;
+	tag.m_dataSize = 0;
+
+	//run the command
+	s = mailbox_property(tag);
+
+	if (s == 0 && tag.m_dataSize == 0x80000004)
+		return tag.m_model;
+	else
+	{
+		vcio_pr_warn("Failed to get board revision: s=%d recv data size=%08x", s, tag.m_dataSize);
+		return 0;
+	}
+}
+
 static uint32_t AllocateVcMemory(uint32_t *pHandle, uint32_t size, uint32_t alignment, uint32_t flags)
 {
 	struct vc_tag
 	{
 		uint32_t m_tagId;
-		uint32_t m_sendBufferSize;
-		union {
-			uint32_t m_sendDataSize;
-			uint32_t m_recvDataSize;
-		};
+		uint32_t m_bufSize;
+		uint32_t m_dataSize;
 
 		struct args
 		{
@@ -102,7 +131,7 @@ static uint32_t AllocateVcMemory(uint32_t *pHandle, uint32_t size, uint32_t alig
 
 	//fill in the tag for the allocation command
 	tag.m_tagId = RPI_FIRMWARE_ALLOCATE_MEMORY;
-	tag.m_sendDataSize = tag.m_sendBufferSize = 12;
+	tag.m_dataSize = tag.m_bufSize = 12;
 
 	//fill in our args
 	tag.m_args.m_size = size;
@@ -112,14 +141,14 @@ static uint32_t AllocateVcMemory(uint32_t *pHandle, uint32_t size, uint32_t alig
 	//run the command
 	s = mailbox_property(tag);
 
-	if (s == 0 && tag.m_recvDataSize == 0x80000004)
+	if (s == 0 && tag.m_dataSize == 0x80000004)
 	{
 		*pHandle = tag.m_args.m_handle;
 		return 0;
 	}
 	else
 	{
-		vcio_pr_warn("Failed to allocate VC memory: s=%d recv data size=%08x", s, tag.m_recvDataSize);
+		vcio_pr_warn("Failed to allocate VC memory: s=%d recv data size=%08x", s, tag.m_dataSize);
 		return s ? s : 1;
 	}
 }
@@ -129,11 +158,8 @@ static uint32_t ReleaseVcMemory(uint32_t handle)
 	struct vc_tag
 	{
 		uint32_t m_tagId;
-		uint32_t m_sendBufferSize;
-		union {
-			uint32_t m_sendDataSize;
-			uint32_t m_recvDataSize;
-		};
+		uint32_t m_bufSize;
+		uint32_t m_dataSize;
 
 		struct args
 		{
@@ -147,18 +173,18 @@ static uint32_t ReleaseVcMemory(uint32_t handle)
 
 	//fill in the tag for the release command
 	tag.m_tagId = RPI_FIRMWARE_RELEASE_MEMORY;
-	tag.m_sendDataSize = tag.m_sendBufferSize = 4;
+	tag.m_dataSize = tag.m_bufSize = 4;
 
 	//pass across the handle
 	tag.m_args.m_handle = handle;
 
 	s = mailbox_property(tag);
 
-	if (s == 0 && tag.m_recvDataSize == 0x80000004 && tag.m_args.m_error == 0)
+	if (s == 0 && tag.m_dataSize == 0x80000004 && tag.m_args.m_error == 0)
 		return 0;
 	else
 	{
-		vcio_pr_warn("Failed to release VC memory: rc=%i recv data size=%08x error=%08x", s, tag.m_recvDataSize, tag.m_args.m_error);
+		vcio_pr_warn("Failed to release VC memory: rc=%i recv data size=%08x error=%08x", s, tag.m_dataSize, tag.m_args.m_error);
 		return s ? s : 1;
 	}
 }
@@ -168,11 +194,8 @@ static uint32_t LockVcMemory(uint32_t *pBusAddress, uint32_t handle)
 	struct vc_tag
 	{
 		uint32_t m_tagId;
-		uint32_t m_sendBufferSize;
-		union {
-			uint32_t m_sendDataSize;
-			uint32_t m_recvDataSize;
-		};
+		uint32_t m_bufSize;
+		uint32_t m_dataSize;
 
 		struct args
 		{
@@ -186,14 +209,14 @@ static uint32_t LockVcMemory(uint32_t *pBusAddress, uint32_t handle)
 
 	//fill in the tag for the lock command
 	tag.m_tagId = RPI_FIRMWARE_LOCK_MEMORY;
-	tag.m_sendDataSize = tag.m_sendBufferSize = 4;
+	tag.m_dataSize = tag.m_bufSize = 4;
 
 	//pass across the handle
 	tag.m_args.m_handle = handle;
 
 	s = mailbox_property(tag);
 
-	if (s == 0 && tag.m_recvDataSize == 0x80000004)
+	if (s == 0 && tag.m_dataSize == 0x80000004)
 	{
 		//pick out the bus address
 		*pBusAddress = tag.m_args.m_busAddress;
@@ -201,7 +224,7 @@ static uint32_t LockVcMemory(uint32_t *pBusAddress, uint32_t handle)
 	}
 	else
 	{
-		vcio_pr_warn("Failed to lock VC memory: s=%d recv data size=%08x", s, tag.m_recvDataSize);
+		vcio_pr_warn("Failed to lock VC memory: s=%d recv data size=%08x", s, tag.m_dataSize);
 		return s ? s : 1;
 	}
 }
@@ -211,11 +234,8 @@ static uint32_t UnlockVcMemory(uint32_t handle)
 	struct vc_tag
 	{
 		uint32_t m_tagId;
-		uint32_t m_sendBufferSize;
-		union {
-			uint32_t m_sendDataSize;
-			uint32_t m_recvDataSize;
-		};
+		uint32_t m_bufSize;
+		uint32_t m_dataSize;
 
 		struct args
 		{
@@ -229,7 +249,7 @@ static uint32_t UnlockVcMemory(uint32_t handle)
 
 	//fill in the tag for the unlock command
 	tag.m_tagId = RPI_FIRMWARE_UNLOCK_MEMORY;
-	tag.m_sendDataSize = tag.m_sendBufferSize = 4;
+	tag.m_dataSize = tag.m_bufSize = 4;
 
 	//pass across the handle
 	tag.m_args.m_handle = handle;
@@ -237,11 +257,11 @@ static uint32_t UnlockVcMemory(uint32_t handle)
 	s = mailbox_property(tag);
 
 	//check the error code too
-	if (s == 0 && tag.m_recvDataSize == 0x80000004 && tag.m_args.m_error == 0)
+	if (s == 0 && tag.m_dataSize == 0x80000004 && tag.m_args.m_error == 0)
 		return 0;
 	else
 	{
-		vcio_pr_warn("Failed to unlock VC memory: s=%d recv data size=%08x error%08x", s, tag.m_recvDataSize, tag.m_args.m_error);
+		vcio_pr_warn("Failed to unlock VC memory: s=%d recv data size=%08x error%08x", s, tag.m_dataSize, tag.m_args.m_error);
 		return s ? s : 1;
 	}
 }
@@ -251,11 +271,8 @@ static uint32_t QpuEnable(unsigned enable)
 	struct vc_tag
 	{
 		uint32_t m_tagId;
-		uint32_t m_sendBufferSize;
-		union {
-			uint32_t m_sendDataSize;
-			uint32_t m_recvDataSize;
-		};
+		uint32_t m_bufSize;
+		uint32_t m_dataSize;
 
 		struct args
 		{
@@ -271,16 +288,16 @@ static uint32_t QpuEnable(unsigned enable)
 
 	/* property message to VCIO channel */
 	tag.m_tagId = RPI_FIRMWARE_SET_ENABLE_QPU;
-	tag.m_sendDataSize = tag.m_sendBufferSize = 4;
+	tag.m_dataSize = tag.m_bufSize = 4;
 
 	s = mailbox_property(tag);
 
 	//check the error code too
-	if (s == 0 && tag.m_recvDataSize == 0x80000004)
+	if (s == 0 && tag.m_dataSize == 0x80000004)
 		return tag.m_args.m_return;
 	else
 	{
-		vcio_pr_warn("Failed to execute QPU: s=%d recv data size=%08x", s, tag.m_recvDataSize);
+		vcio_pr_warn("Failed to execute QPU: s=%d recv data size=%08x", s, tag.m_dataSize);
 		return s;
 	}
 }
@@ -290,11 +307,8 @@ static uint32_t ExecuteQpu(uint32_t num_qpus, uint32_t control, uint32_t noflush
 	struct vc_tag
 	{
 		uint32_t m_tagId;
-		uint32_t m_sendBufferSize;
-		union {
-			uint32_t m_sendDataSize;
-			uint32_t m_recvDataSize;
-		};
+		uint32_t m_bufSize;
+		uint32_t m_dataSize;
 
 		struct args
 		{
@@ -313,7 +327,7 @@ static uint32_t ExecuteQpu(uint32_t num_qpus, uint32_t control, uint32_t noflush
 
 	/* property message to VCIO channel */
 	tag.m_tagId = RPI_FIRMWARE_EXECUTE_QPU;
-	tag.m_sendDataSize = tag.m_sendBufferSize = 16;
+	tag.m_dataSize = tag.m_bufSize = 16;
 
 	//pass across the handle
 	tag.m_args.m_numQpus = num_qpus;
@@ -326,11 +340,11 @@ static uint32_t ExecuteQpu(uint32_t num_qpus, uint32_t control, uint32_t noflush
 	vcio_pr_debug("mbox: %i", s);
 
 	//check the error code too
-	if (s == 0 && tag.m_recvDataSize == 0x80000004)
+	if (s == 0 && tag.m_dataSize == 0x80000004)
 		return tag.m_args.m_return;
 	else
 	{
-		vcio_pr_warn("Failed to execute QPU: s=%d recv data size=%08x", s, tag.m_recvDataSize);
+		vcio_pr_warn("Failed to execute QPU: s=%d recv data size=%08x", s, tag.m_dataSize);
 		return s;
 	}
 }
@@ -352,28 +366,6 @@ typedef struct
 	unsigned    Count;/**< Number of Entries in the list above */
 	unsigned    Size; /**< Allocated number of entries in the list above */
 } vcio_allocs;
-
-/** Locate memory handle in vcio_allocs.
- * @param allocs Allocation collection.
- * @param handle Memory handle to search for.
- * @return Location in allocs->List if found or
- * 2's complement of the location where it should be inserted if not found. */
-static int vcioa_locate(const vcio_allocs* allocs, unsigned handle)
-{
-	unsigned l = 0;
-	unsigned r = allocs->Count;
-	vcio_pr_debug("%s(%p{%p,%u,%u}, %x)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, handle);
-	while (l < r)
-	{	unsigned m = (l + r) >> 1;
-		unsigned h = allocs->List[m].Handle;
-		if (handle < h)
-			r = m;
-		else if (handle > h)
-			l = m + 1;
-		return m;
-	}
-	return ~l;
-}
 
 /** Insert empty slot in vcio_allocs collection.
  * @param allocs Allocation collection.
@@ -414,6 +406,28 @@ static void vcioa_delete(vcio_allocs* allocs, unsigned pos)
 	memmove(dp + 1, dp, (allocs->Count - pos) * sizeof *allocs->List);
 }
 
+/** Locate memory handle in vcio_allocs.
+ * @param allocs Allocation collection.
+ * @param handle Memory handle to search for.
+ * @return Location in allocs->List if found or
+ * 2's complement of the location where it should be inserted if not found. */
+static int vcioa_find_handle(const vcio_allocs* allocs, unsigned handle)
+{
+	unsigned l = 0;
+	unsigned r = allocs->Count;
+	vcio_pr_debug("%s(%p{%p,%u,%u}, %x)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, handle);
+	while (l < r)
+	{	unsigned m = (l + r) >> 1;
+		unsigned h = allocs->List[m].Handle;
+		if (handle < h)
+			r = m;
+		else if (handle > h)
+			l = m + 1;
+		return m;
+	}
+	return ~l;
+}
+
 /** Look for an entry that contains a certain physical memory address.
  * @param allocs Allocation collection.
  * @param addr Address to search for.
@@ -425,6 +439,7 @@ static vcio_alloc* vcioa_find_addr(const vcio_allocs* allocs, unsigned addr)
 	vcio_alloc* ap;
 	vcio_alloc* ape;
 	vcio_pr_debug("%s(%p{%p,%u,%u}, %x)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, addr);
+
 	ap = allocs->List;
 	ape = ap + allocs->Count;
 	for (; ap != ape; ++ap)
@@ -493,7 +508,7 @@ static int vcio_set_enabled(vcio_data* data, char value)
 	if (data->Enabled != value)
 	{	mutex_lock(&vcio_lock);
 		if ( (value ? ++vcio_enabled_count == 1 : --vcio_enabled_count == 0)
-			&& QpuEnable(1) )
+			&& QpuEnable(!!value) )
 		{	vcio_enabled_count += value ? -1 : 1;
 			rc = -ENODEV;
 		} else
@@ -583,7 +598,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 					if (AllocateVcMemory(&p.out.handle, size, p.in.alignment, p.in.flags))
 					{	p.out.handle = 0;
 						rc = -ENOMEM;
-					} else if ((pos = vcioa_locate(&data->Allocations, p.out.handle)) >= 0)
+					} else if ((pos = vcioa_find_handle(&data->Allocations, p.out.handle)) >= 0)
 					{	vcio_pr_err("allocated handle %d twice ???", p.out.handle);
 						ReleaseVcMemory(p.out.handle);
 						p.out.handle = 0;
@@ -606,7 +621,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				case IOCTL_MEM_RELEASE:
 				{
 					vcio_pr_debug("IOCTL_MEM_RELEASE: %x", (unsigned)ioctl_param);
-					pos = vcioa_locate(&data->Allocations, ioctl_param);
+					pos = vcioa_find_handle(&data->Allocations, ioctl_param);
 					if (pos < 0)
 						rc = -EBADF;
 					else
@@ -626,7 +641,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 					unsigned param;
 					copy_from_user(&param, (void*)ioctl_param, sizeof param);
 					vcio_pr_debug("IOCTL_MEM_LOCK %x", param);
-					pos = vcioa_locate(&data->Allocations, param);
+					pos = vcioa_find_handle(&data->Allocations, param);
 					if (pos < 0)
 						rc = -EBADF;
 					else
@@ -638,7 +653,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 						{	param = 0;
 							rc = ENOMEM;
 						} else
-							ap->Location = param;
+							ap->Location = param & VC_MEM_TO_ARM_ADDR_MASK;
 					}
 					vcio_pr_debug("IOCTL_MEM_LOCK: %x", param);
 					copy_to_user((void*)ioctl_param, &param, sizeof param);
@@ -648,7 +663,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				case IOCTL_MEM_UNLOCK:
 				{
 					vcio_pr_debug("IOCTL_MEM_UNLOCK %x", (unsigned)ioctl_param);
-					pos = vcioa_locate(&data->Allocations, ioctl_param);
+					pos = vcioa_find_handle(&data->Allocations, ioctl_param);
 					if (pos < 0)
 						rc = -EBADF;
 					else
@@ -675,7 +690,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 					copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in);
 					vcio_pr_debug("IOCTL_EXEC_QPU %x, %x, %x, %x", p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout);
 					/* verify starting point */
-					if (!vcioa_find_addr(&data->Allocations, p.in.control))
+					if (!vcioa_find_addr(&data->Allocations, p.in.control & VC_MEM_TO_ARM_ADDR_MASK))
 						rc = -EACCES;
 					else if ((rc = vcio_set_enabled(data, 1)) == 0)
 					{	/* TODO: verify starting points of code and uniforms too
@@ -699,8 +714,8 @@ fail:
 }
 
 static const struct vm_operations_struct vm_ops = {
-/*    .open =  simple_vma_open,
-    .close = simple_vma_close,*/
+/*.open =  simple_vma_open,
+  .close = simple_vma_close,*/
 #ifdef CONFIG_HAVE_IOREMAP_PROT
 	.access = generic_access_phys
 #endif
@@ -714,11 +729,9 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 
 	/* we only support shared mappings. Copy on write mappings are
 	 rejected here. A shared mapping that is writeable must have the
-	 shared flag set.
-	 */
+	 shared flag set. */
 	if ((vma->vm_flags & VM_WRITE) && !(vma->vm_flags & VM_SHARED))
-	{
-		vcio_pr_info("writeable mappings must be shared, rejecting");
+	{	vcio_pr_info("writeable mappings must be shared, rejecting");
 		return -EINVAL;
 	}
 
@@ -726,6 +739,9 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 	{
 		vcio_alloc* vca;
 		unsigned start = vma->vm_pgoff << PAGE_SHIFT;
+		// Allow RPi1 memory alias without VC4 cache.
+		if (vcio_model1)
+			start &= ~0x20000000;
 
 		/* Check whether the mapped memory belongs to a buffer allocated by the same file handle. */
 		mutex_lock(&data->Lock);
@@ -733,6 +749,7 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 		vca = vcioa_find_addr(&data->Allocations, start);
 		if (vca == NULL)
 		{
+			mutex_unlock(&data->Lock);
 			vcio_pr_info("tried to map memory (%x) that is not allocated by this device.", start);
 			return -EACCES;
 		}
@@ -740,6 +757,7 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 		{
 			vcio_pr_info("the memory region to map exceeds the allocated buffer (%x[%x] vs. %x[%x]).",
 				start, size, vca->Location, vca->Size);
+			mutex_unlock(&data->Lock);
 			return -EACCES;
 		}
 
@@ -756,8 +774,7 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 
 	rc = remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff, size, vma->vm_page_prot);
 	if (rc)
-	{
-		vcio_pr_warn("remap page range failed with %d", rc);
+	{	vcio_pr_warn("remap page range failed with %d", rc);
 		return rc;
 	}
 
@@ -862,14 +879,21 @@ static int vcio_probe(struct platform_device *pdev)
 				 __io_address(ARM_0_MAIL0_RD));
 #endif
 
-	struct device_node *np;
-	np = of_find_compatible_node(NULL, NULL, "raspberrypi,bcm2835-firmware");
-	if (!of_device_is_available(np))
-		return -ENODEV;
+	{	struct device_node *np;
+		np = of_find_compatible_node(NULL, NULL, "raspberrypi,bcm2835-firmware");
+		if (!of_device_is_available(np))
+			return -ENODEV;
 
-	firmware = rpi_firmware_get(np);
-	if (!firmware)
-		return -ENODEV;
+		firmware = rpi_firmware_get(np);
+		if (!firmware)
+			return -ENODEV;
+	}
+
+	{	// check if model 1
+		uint32_t revision = GetBoardRevision();
+		vcio_pr_debug("Board revision %x", revision);
+		vcio_model1 = !(revision & 0x800000) || !(revision & 0xf000);
+	}
 
 	//pr_info(DRIVER_NAME ": 1\n");
 
@@ -936,6 +960,7 @@ static int vcio_probe(struct platform_device *pdev)
 	return ret;
 }
 
+#ifndef BCM_VCIO2_ADD
 static struct platform_driver vcio_driver = {
 	.probe = vcio_probe,
 	.remove = vcio_remove,
@@ -945,6 +970,7 @@ static struct platform_driver vcio_driver = {
 		.owner = THIS_MODULE,
 	},
 };
+#endif
 
 static int __init vcio_init(void)
 {

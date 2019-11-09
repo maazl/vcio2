@@ -39,7 +39,7 @@
       <li><strong>vcio2 does not validate the shader code. It is still a major security issue to permit users to use the vcio2
           device.</strong> It just protects against some accidental misbehavior. <em>This will never change</em>, since VideoCore
         IV has no MMU. But access to vcio2 is no more risky than access to the vcio device that Raspbian grants to the video group
-        by default.</li>
+        by default as well.</li>
       <li><b>Power management events</b> (e.g. ARM clock changes) <b>are blocked</b> during execution of GPU code.<br>
         This is an restriction of the RPi firmware. It simply uses the same mailbox channel for system health and GPU execution.</li>
       <li><b>No two applications can run GPU code concurrently</b> even if they do not use all QPUs.<br>
@@ -86,7 +86,6 @@
       <li><tt>sudo make remove</tt></li>
     </ul>
     <p>This will unload the kernel module and uninstall it.</p>
-    <h2><a name="usage"></a></h2>
     <h2><a name="contact"></a>Contact</h2>
     <p>Comments, ideas, bugs, improvements to <i>raspi at maazl dot de</i>.</p>
   </body>
