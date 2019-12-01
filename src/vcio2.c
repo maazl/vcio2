@@ -35,6 +35,8 @@
 #include <linux/module.h>
 #include <linux/uaccess.h>
 #include <linux/dma-mapping.h>
+#include <linux/log2.h>
+#include <linux/io.h>
 #include <linux/broadcom/vc_mem.h>
 #include <soc/bcm2835/raspberrypi-firmware.h>
 #include <soc/bcm2835/vcio2.h>
@@ -68,14 +70,24 @@ static struct device *vcio_dev0 = NULL;
 static struct device *vcio_dev1 = NULL;
 /// root pointer for rpi_firmware API
 static struct rpi_firmware *firmware = NULL;
-
 /// 1 if Pi is Model 1, i.e. BCM2835
-static char vcio_model1;
+static char vcio_model1 = 1;
+/// V3D base address
+static uint32_t* vcio_v3d_base = NULL;
 /// synchronize access to the following working set.
 struct mutex vcio_lock;
+
 /// Is the QPU enabled now? Number of requesting clients.
 static unsigned vcio_enabled_count = 0;
 
+/// Mapping of V3D performance counters.
+/// Each value consists of the counter index in bits [28..31] and the use count in the lower bits.
+/// The array index is the counter id - 13
+static unsigned vcio_perf_count_map[17] = {0};
+#define vcio_perf_count(id) vcio_perf_count_map[(id)-13]
+#define VCIO_PERF_COUNT_INDEX(map) ((map) >> 28)
+#define VCIO_PERF_COUNT_USAGE(map) ((map) & ((1<<28)-1))
+#define VCIO_PERF_COUNT_MAP(id) ((id) << 28)
 
 #define mailbox_property(tag) rpi_firmware_property_list(firmware, &tag, sizeof (tag));
 
@@ -337,8 +349,6 @@ static uint32_t ExecuteQpu(uint32_t num_qpus, uint32_t control, uint32_t noflush
 
 	s = mailbox_property(tag);
 
-	vcio_pr_debug("mbox: %i", s);
-
 	//check the error code too
 	if (s == 0 && tag.m_dataSize == 0x80000004)
 		return tag.m_args.m_return;
@@ -351,8 +361,7 @@ static uint32_t ExecuteQpu(uint32_t num_qpus, uint32_t control, uint32_t noflush
 
 /** allocation entry */
 typedef struct
-{
-	unsigned Handle;  /**< List of currently active allocation handles */
+{	unsigned Handle;  /**< List of currently active allocation handles */
 	unsigned Size;    /**< Size of the Segment in bytes */
 	unsigned Location;/**< Memory segment is locked to this physical address */
 } vcio_alloc;
@@ -361,8 +370,7 @@ typedef struct
 
 /** dynamic array of allocation entries */
 typedef struct
-{
-	vcio_alloc* List; /**< List of currently active allocation handles */
+{	vcio_alloc* List; /**< List of currently active allocation handles */
 	unsigned    Count;/**< Number of Entries in the list above */
 	unsigned    Size; /**< Allocated number of entries in the list above */
 } vcio_allocs;
@@ -472,13 +480,19 @@ static void vcioa_destroy(vcio_allocs* allocs)
 	allocs->Count = allocs->Size = 0;
 }
 
+#define V3D_PCTRC (0x670>>2)               ///< Performance Counter Clear register
+#define V3D_PCTRE (0x674>>2)               ///< Performance Counter Enables register
+#define V3D_PCTR(n) ((0x680>>2) + (n<<1))  ///< Performance Counter Count n register
+#define V3D_PCTRS(n) ((0x684>>2) + (n<<1)) ///< Performance Counter Mapping n register
+#define V3D_MAX_PERF_CONUT 16
+
 /** Private driver data for an opened device handle. */
 typedef struct
-{
-	struct mutex Lock;        /**< synchronize access to this structure.*/
-	vcio_allocs  Allocations; /**< list with memory allocations of this open device instance. */
-	char         Enabled;     /**< Is the QPU enabled by this device instance? */
-
+{	struct mutex Lock;            /**< synchronize access to this structure. */
+	vcio_allocs  Allocations;     /**< list with memory allocations of this open device instance. */
+	char         Enabled;         /**< Is the QPU enabled by this device instance? */
+	uint32_t     CountersEnabled; /**< bit vector of performance counters enabled by this instance */
+	uint32_t     CounterValue[V3D_MAX_PERF_CONUT];/**< current values of the performance counters for this instance */
 } vcio_data;
 
 /** create vcio_data. */
@@ -494,10 +508,11 @@ static vcio_data* vcio_create(void)
  */
 static void vcio_destroy(vcio_data* data)
 {
-	vcioa_destroy(&data->Allocations);
 	mutex_destroy(&data->Lock);
 	kfree(data);
 }
+
+static int vcio_set_perf_count_enable(vcio_data* data, uint32_t counters);
 
 /** Ensure QPU enabled state.
  * @param data vcio_data structure.
@@ -506,7 +521,9 @@ static void vcio_destroy(vcio_data* data)
 static int vcio_set_enabled(vcio_data* data, char value)
 {	int rc = 0;
 	if (data->Enabled != value)
-	{	mutex_lock(&vcio_lock);
+	{	if (!value)
+			vcio_set_perf_count_enable(data, 0);
+		mutex_lock(&vcio_lock);
 		if ( (value ? ++vcio_enabled_count == 1 : --vcio_enabled_count == 0)
 			&& QpuEnable(!!value) )
 		{	vcio_enabled_count += value ? -1 : 1;
@@ -519,9 +536,118 @@ static int vcio_set_enabled(vcio_data* data, char value)
 	return rc;
 }
 
+/** Enable/disable performance counters for one instance.
+ * @param data vcio_data structure.
+ * @param counters Bit vector with counters to enable for this instance. 0: disable all
+ * @return 0: success,
+ * -EINVAL: counters contains unsupported counter
+ * -EBUSY: all V3D performance counters are busy - no changes made. */
+static int vcio_set_perf_count_enable(vcio_data* data, uint32_t counters)
+{
+	uint32_t changed = counters ^ data->CountersEnabled;
+	uint32_t new = 0;
+	uint32_t free;
 
-/** This is called whenever a process attempts to open the device file
- */
+	if (counters & ~0x3fffe000)
+		return -EINVAL;
+	if (!changed)
+		return 0;
+
+	vcio_set_enabled(data, 1);
+
+	mutex_lock(&vcio_lock);
+
+	free = vcio_v3d_base[V3D_PCTRE];
+	free = (int32_t)free < 0 ? ~free & 0xffff : 0xffff;
+
+	// check for released counters
+	changed &= ~counters;
+	while (changed)
+	{	unsigned map;
+		int id = ilog2(changed);
+		uint32_t counter = 1 << id;
+		changed &= ~counter;
+		map = vcio_perf_count(id);
+		if (VCIO_PERF_COUNT_USAGE(map) == 1)
+			free |= 1 << VCIO_PERF_COUNT_INDEX(map);
+	}
+
+	// allocate new counters
+	changed = counters & ~data->CountersEnabled;
+	while (changed)
+	{	int i;
+		// get next requested counter
+		int id = ilog2(changed);
+		changed &= ~(1 << id);
+		if (VCIO_PERF_COUNT_USAGE(vcio_perf_count(id)))
+			continue; // already in use
+		// find free slot
+		if (!free)
+		{	mutex_unlock(&vcio_lock);
+			return -EBUSY; // too many performance counters
+		}
+		i = ilog2(free);
+		free &= ~(new |= 1 << i);
+		vcio_perf_count(id) = VCIO_PERF_COUNT_MAP(i);
+		data->CounterValue[i] = 0;
+	}
+
+	// execute changes
+	changed = counters ^ data->CountersEnabled;
+	while (changed)
+	{	int id = ilog2(changed);
+		uint32_t counter = 1 << id;
+		changed &= ~counter;
+		if (counters & counter)
+			vcio_v3d_base[V3D_PCTRS(VCIO_PERF_COUNT_INDEX(++vcio_perf_count(id)))] = id;
+		else
+			--vcio_perf_count(id);
+	}
+	vcio_v3d_base[V3D_PCTRC] = new;
+	free = ~free & 0xffff;
+	if (free)
+		free |= 0x80000000;
+	vcio_v3d_base[V3D_PCTRE] = free;
+	vcio_pr_debug("V3D_PCTRE %x", free);
+
+	mutex_unlock(&vcio_lock);
+
+	data->CountersEnabled = counters;
+	return 0;
+}
+
+/** Read all performance counters enabled by this instance.
+ * @param data vcio_data structure.
+ * @param sign +1 or -1 to add or subtract values from accumulators. */
+static void vcio_read_perf_count(vcio_data* data, int sign)
+{ uint32_t counters = data->CountersEnabled;
+	if (!counters)
+		return;
+	mutex_lock(&vcio_lock);
+	while (counters)
+	{	int id = ilog2(counters), i;
+		counters &= ~(1 << id);
+		i = VCIO_PERF_COUNT_INDEX(vcio_perf_count(id));
+		data->CounterValue[i] += vcio_v3d_base[V3D_PCTR(i)] * sign;
+	}
+	mutex_unlock(&vcio_lock);
+}
+
+/** Fetch performance counters.
+ * @param data Fetch counters from this instance.
+ * @param dest Target address.
+ * @return dest + number of stored counters. */
+static uint32_t* vcio_fetch_perf_count(vcio_data* data, uint32_t* dest)
+{	uint32_t counters = data->CountersEnabled, counter;
+	int id;
+	for (counter = V3D_PERF_COUNT_QPU_CYCLES_IDLE, id = ilog2(V3D_PERF_COUNT_QPU_CYCLES_IDLE);
+		counter <= V3D_PERF_COUNT_L2C_L2_CACHE_MISSES; counter <<= 1, ++id)
+		if (counters & counter)
+			*dest++ = data->CounterValue[VCIO_PERF_COUNT_INDEX(vcio_perf_count(id))];
+	return dest;
+}
+
+/** This is called whenever a process attempts to open the device file */
 static int device_open(struct inode *inode, struct file *file)
 {
 	vcio_pr_info("opening vcio %p, %p", inode, file);
@@ -538,7 +664,9 @@ static int device_release(struct inode *inode, struct file *file)
 	vcio_pr_info("closing vcio %p, %p", inode, file);
 
 	if (file->private_data)
-	{	vcio_set_enabled(file->private_data, 0);
+	{	vcio_set_perf_count_enable(file->private_data, 0);
+		vcioa_destroy(&((vcio_data*)file->private_data)->Allocations);
+		vcio_set_enabled(file->private_data, 0);
 		vcio_destroy(file->private_data);
 	}
 
@@ -587,12 +715,17 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 					mutex_unlock(&data->Lock);
 					goto fail;
 
+				mem_read_fault:
+					rc = -EFAULT;
+					break;
+
 				case IOCTL_MEM_ALLOCATE:
 				{
 					vcio_mem_allocate p;
 					vcio_alloc* ap;
 					unsigned size;
-					copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in);
+					if (copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in))
+						goto mem_read_fault;
 					size = p.in.size;
 					vcio_pr_debug("IOCTL_MEM_ALLOCATE %x, %x, %x", size, p.in.alignment, p.in.flags);
 					if (AllocateVcMemory(&p.out.handle, size, p.in.alignment, p.in.flags))
@@ -614,7 +747,8 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 						ap->Location = VCIOA_LOCATION_NONE;
 						vcio_pr_debug("IOCTL_MEM_ALLOCATE: {%d, %x, }", ap->Handle, ap->Size);
 					}
-					copy_to_user((void*)ioctl_param, &p.out, sizeof p.out);
+					if (copy_to_user((void*)ioctl_param, &p.out, sizeof p.out))
+						rc = -EFAULT;
 					break;
 				}
 
@@ -639,7 +773,8 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				case IOCTL_MEM_LOCK:
 				{
 					unsigned param;
-					copy_from_user(&param, (void*)ioctl_param, sizeof param);
+					if (copy_from_user(&param, (void*)ioctl_param, sizeof param))
+						goto mem_read_fault;
 					vcio_pr_debug("IOCTL_MEM_LOCK %x", param);
 					pos = vcioa_find_handle(&data->Allocations, param);
 					if (pos < 0)
@@ -651,12 +786,13 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 							param = ap->Location;
 						} else if (LockVcMemory(&param, ap->Handle))
 						{	param = 0;
-							rc = ENOMEM;
+							rc = -ENOMEM;
 						} else
 							ap->Location = param & VC_MEM_TO_ARM_ADDR_MASK;
 					}
 					vcio_pr_debug("IOCTL_MEM_LOCK: %x", param);
-					copy_to_user((void*)ioctl_param, &param, sizeof param);
+					if (copy_to_user((void*)ioctl_param, &param, sizeof param))
+						rc = -EFAULT;
 					break;
 				}
 
@@ -687,7 +823,8 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 
 				case IOCTL_EXEC_QPU:
 				{	vcio_exec_qpu p;
-					copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in);
+					if (copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in))
+						goto mem_read_fault;
 					vcio_pr_debug("IOCTL_EXEC_QPU %x, %x, %x, %x", p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout);
 					/* verify starting point */
 					if (!vcioa_find_addr(&data->Allocations, p.in.control & VC_MEM_TO_ARM_ADDR_MASK))
@@ -698,9 +835,51 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 						{	if (!vcioa_find_addr(&data->Allocations, ))
 								goto exec_fail;
 						}*/
+
+						vcio_read_perf_count(data, -1);
+
 						if (ExecuteQpu(p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout))
 							rc = -ENOEXEC;
+
+						vcio_read_perf_count(data, 1);
 					}
+					break;
+				}
+
+				case IOCTL_GET_VCIO_VERSION:
+				{	uint32_t version = 0x00000002; // 0.2
+					if (copy_to_user((void*)ioctl_param, &version, sizeof version))
+						rc = -EFAULT;
+					break;
+				}
+
+				case IOCTL_SET_V3D_PERF_COUNT:
+				{	vcio_pr_debug("case IOCTL_SET_V3D_PERF_COUNT %x", (unsigned)ioctl_param);
+					rc = vcio_set_perf_count_enable(data, (uint32_t)ioctl_param);
+					break;
+				}
+
+				case IOCTL_GET_V3D_PERF_COUNT:
+				{	if (copy_to_user((void*)ioctl_param, &data->CountersEnabled, sizeof(uint32_t)))
+						rc = -EFAULT;
+					break;
+				}
+
+				case IOCTL_READ_V3D_PERF_COUNT:
+				{	vcio_pr_debug("case IOCTL_READ_V3D_PERF_COUNT %p, %x", (void*)ioctl_param, data->CountersEnabled);
+					if (!data->CountersEnabled)
+						rc = -ENODATA;
+					else
+					{	uint32_t counters[V3D_MAX_PERF_CONUT];
+						unsigned size = (char*)vcio_fetch_perf_count(data, counters) - (char*)counters;
+						if (copy_to_user((void*)ioctl_param, counters, size))
+							rc = -EFAULT;
+					}
+					break;
+				}
+
+				case IOCTL_RESET_V3D_PERF_COUNT:
+				{	memset(data->CounterValue, 0, sizeof data->CounterValue);
 					break;
 				}
 			}
@@ -738,7 +917,8 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 	if (data)
 	{
 		vcio_alloc* vca;
-		unsigned start = vma->vm_pgoff << PAGE_SHIFT;
+		// Accept bus address as well. Won't work on Pi 4, but this one has no VideoCore IV anyway.
+		unsigned start = (vma->vm_pgoff << PAGE_SHIFT) & VC_MEM_TO_ARM_ADDR_MASK;
 		// Allow RPi1 memory alias without VC4 cache.
 		if (vcio_model1)
 			start &= ~0x20000000;
@@ -804,6 +984,11 @@ static int vcio_remove(struct platform_device *pdev)
 #endif
 
 	mutex_destroy(&vcio_lock);
+
+	if (vcio_v3d_base)
+	{	iounmap(vcio_v3d_base);
+		vcio_v3d_base = NULL;
+	}
 
 	if (vcio_dev0 != NULL)
 	{	device_destroy(vcio_class, vcio_dev0->devt);
@@ -886,7 +1071,9 @@ static int vcio_probe(struct platform_device *pdev)
 
 		firmware = rpi_firmware_get(np);
 		if (!firmware)
+		{	vcio_pr_err("rpi_firmware_get failed");
 			return -ENODEV;
+		}
 	}
 
 	{	// check if model 1
@@ -895,7 +1082,14 @@ static int vcio_probe(struct platform_device *pdev)
 		vcio_model1 = !(revision & 0x800000) || !(revision & 0xf000);
 	}
 
-	//pr_info(DRIVER_NAME ": 1\n");
+	{	// map I/O registers
+		vcio_v3d_base = ioremap(vcio_model1 ? 0x20c00000 : 0x3fc00000, 0x1000);
+		vcio_pr_debug("IO: %x", vcio_v3d_base);
+		if (!vcio_v3d_base)
+		{	vcio_pr_err("Failed to map V3D register");
+			return -EBUSY;
+		}
+	}
 
 	/* Register the character device */
 	ret = alloc_chrdev_region(&vcio_dev, 0, 2, DEVICE_FILE_NAME);
@@ -905,8 +1099,6 @@ static int vcio_probe(struct platform_device *pdev)
 		goto fail;
 	}
 
-	//pr_info(DRIVER_NAME ": 2\n");
-
 	cdev_init(&vcio_cdev0, &fops);
 	vcio_cdev0.owner = THIS_MODULE;
 	ret = cdev_add(&vcio_cdev0, vcio_dev, 1);
@@ -915,7 +1107,6 @@ static int vcio_probe(struct platform_device *pdev)
 		memset(&vcio_cdev0, 0, sizeof vcio_cdev0);
 		goto fail;
 	}
-	//pr_info(DRIVER_NAME ": 3 %d\n", ret);
 	cdev_init(&vcio_cdev1, &fops);
 	vcio_cdev1.owner = THIS_MODULE;
 	ret = cdev_add(&vcio_cdev1, vcio_dev+1, 1);
@@ -924,7 +1115,6 @@ static int vcio_probe(struct platform_device *pdev)
 		memset(&vcio_cdev1, 0, sizeof vcio_cdev1);
 		goto fail;
 	}
-	//pr_info(DRIVER_NAME ": 3 %d\n", ret);
 
 	/* Create vcio device */
 	vcio_class = class_create(THIS_MODULE, DRIVER_NAME);
@@ -1001,7 +1191,7 @@ static void __exit vcio_exit(void)
 
 #if BCM_VCIO2_ADD
 module_init(vcio_init);
-MODULE_SOFTDEP("pre: vcio");
+//MODULE_SOFTDEP("pre: vcio");
 #else
 arch_initcall(vcio_init);	/* Initialize early */
 #endif

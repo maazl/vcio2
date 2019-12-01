@@ -21,7 +21,8 @@
         code @ github</a></p>
     <dl>
       <dt>V0.2</dt>
-      <dd>Rewrote the driver to support newer RPi kernels.</dd>
+      <dd>Rewrote the driver to support newer RPi kernels.<br>
+        Added performance counter support.</dd>
       <dt>V0.1</dt>
       <dd>First public release.</dd>
     </dl>
@@ -31,6 +32,7 @@
       <li><b>Automatic cleanup of resources</b> like GPU memory on application termination, e.g. crash or <tt>SIGBREAK</tt>.</li>
       <li><b>Share the GPU</b> by multiple applications.</li>
       <li>Enable and disable the GPU automatically.</li>
+      <li>Read performance counters.</li>
       <li>Some protection against invalid memory access.</li>
       <li><b>Supports</b> Raspberry Pi models: <b>RPi 1, RPi 2, RPi 3</b> (all variants)</li>
     </ul>
@@ -44,15 +46,19 @@
         This is an restriction of the RPi firmware. It simply uses the same mailbox channel for system health and GPU execution.</li>
       <li><b>No two applications can run GPU code concurrently</b> even if they do not use all QPUs.<br>
         This is due to some global GPU resources like semaphores that cannot be reasonably shared.</li>
+      <li>vcio2 is <b>incompatible to <tt>rpi-update</tt></b>. This is due to the fact that <tt>rpi-update</tt> does not provide
+        kernel headers and therefore is incompatible to dkms.</li>
+    </ul>
+    <h3>TODOs, known problems</h3>
+    <ul>
       <li><b>Closing the device</b> or unlock of memory <b>leaves invalid memory mappings</b> in the current processes virtual
         address space.<br>
         This is a bug. I simply did not find a kernel function to revoke memory mappings so far.</li>
-    </ul>
-    <h3>TODOs</h3>
-    <ul>
+      <li><b>Running hello_fft with small batch size</b> (i.e. direct V3D register access) <b><i>after</i> vcio2</b> has run at
+        least one QPU batch <b>leaves the QPU in an unusable state</b>. Typically QPU interrupts do no longer fire and all user
+        shaders get disabled by <tt>V3D_SQRSV</tt> registers. Reason unknown, maybe a firmware bug.</li>
       <li>Power off the QPU after execution timeouts for better error recovery. </li>
       <li> Implement some higher level functions that do memory allocations, locking and mapping in one step.</li>
-      <li>Provide functions to access the performance counters.</li>
     </ul>
     <h2><a name="install"></a>Installation instructions</h2>
     <h3>Prerequisites</h3>
@@ -66,10 +72,10 @@
       <li>Unpack the <a href="#download">package</a> above to some folder.</li>
       <li>Open a shell.</li>
       <li>Go to the folder where the files are extracted. (not to sub folder <tt>src</tt>)</li>
-      <li><tt>sudo make install</tt></li>
+      <li><tt>sudo make</tt></li>
     </ul>
     <p>Normally this should build the kernel module using DKMS, install it for the currently running kernel, setup the driver for
-      autostart, load the driver and grant access to the group <tt>video</tt>. So you are ready to use immediately.</p>
+      autostart, load the driver and grant access to the group <tt>video</tt>. So it is ready to use immediately.</p>
     <p>If it does not work, have a look at the error messages on the screen as well as <tt>/var/dkms/vcio2/0.2/build/make.log</tt>
       (compilation) and <tt>/var/log/syslog</tt> (loading).</p>
     <h3>Using the driver</h3>

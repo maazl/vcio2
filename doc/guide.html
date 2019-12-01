@@ -8,7 +8,7 @@
   </head>
   <body>
     <h1>vcio2 programming guide</h1>
-    <p><a class="nobr" href="index.html">&#9650; Top</a>, <a class="nobr" href="#migrate">&#9660; Migrating vcio applications</a>, <a href="#concurrent">&#9660;
+    <p><a class="nobr" href="index.html">&#9650; Top</a>, <a class="nobr" href="#migrate">&#9660; Migration of vcio applications</a>, <a href="#concurrent">&#9660;
         Concurrent use of vcio2</a>, <a class="nobr" href="#sample">&#9660; Sample code</a>, <a class="nobr" href="APIref.html">&#9654; API
         reference</a></p>
     <h2>Use the GPU with vcio2</h2>
@@ -57,20 +57,37 @@
       This restriction does not apply to calls that are independent, e.g. reading the GPU memory size or even GPU memory
       allocations. The vcio2 driver and the vcio driver share a common mutex for this purpose. Only indirect dependencies are not
       tracked.</p>
+    <h3>Performance counters</h3>
+    <p>vcio2 manages access to the V3D performance counters for all device users. There is however no way to synchronize access to
+      the hardware registers with other applications or drivers that access these counters. I.e. as soon as any application enables
+      performance counters via<tt> <a href="APIref.html#IOCTL_SET_V3D_PERF_COUNT">IOCTL_SET_V3D_PERF_COUNT</a></tt> no other way to
+      access these counters must be used unless the feature is disabled again.</p>
     <p>There are no more restrictions that I know of.</p>
     <h2><a id="sample" name="sample"></a>Sample application</h2>
-    <p>In the sample folder there is a simple sample application that utilizes the vcio2 device. It does some stupid computations by
-      applying all available QPU operators to a bunch of constants.</p>
+    <p>In the sample folder there is a simple sample application that utilizes the vcio2 device in different variants, each in its
+      own folder. It does some stupid computations by applying all available QPU operators to a bunch of constants.</p>
+    <h3>Variants</h3>
+    <dl>
+      <dt> <tt><b>porting</b></tt> </dt>
+      <dd>
+        <div>This is the sample application that uses an API closely to the mailbox API of hello_fft. It only routes the method
+          calls to the corresponding IOCTLs of vcio2.</div>
+      </dd>
+      <dt> <tt><b>hybrid</b></tt></dt>
+      <dd>This implementation first checks whether <tt>/dev/vcio2</tt> is available. If it is present the behavior is the same than
+        variant 'porting'. But if not then the code falls back to the builtin <tt>/dev/vcio</tt> driver.<br>
+        You should use this pattern only if you want to ensure that your application does not strictly depend on vcio2. But there
+        are several drawbacks. First of all, without vcio2 the application always requires root privileges.</dd>
+    </dl>
     <h3>How to build and run</h3>
     <ul>
-      <li>Enter one of the sample directories, <tt>sample/porting</tt> or <tt>sample/hybrid</tt>.</li>
+      <li>Enter one of the sample directories.</li>
       <li>Type <tt>make</tt></li>
       <li>Run <tt>./smitest</tt></li>
     </ul>
     <p>Now the test application should print some pages of results to the console. Of course, you need to <a href="index.html#install">install
-        the vcio2 driver</a> before.</p>
-    <p>In case you have chosen the <tt>hybrid</tt> directory the application may run without the vcio2 driver installed as well.
-      But you must run it as root in this case.</p>
+        the vcio2 driver</a> before. In case you have chosen the <tt>hybrid</tt> directory the application may run without the
+      vcio2 driver installed as well. But you must run it as root in this case.</p>
     <p><var></var></p>
   </body>
 </html>

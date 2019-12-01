@@ -23,7 +23,11 @@
     <pre>close(vcio2);</pre>
     <p>Close the vcio2 device and release all resources.</p>
     <h2><a id="IOCTL" name="IOCTL"></a>vcio2 IOCTLs</h2>
-    <h3><tt><a id="IOCTL_MEM_ALLOC" name="IOCTL_MEM_ALLOC"></a>IOCTL_MEM_ALLOCATE (0xC00C6501) </tt></h3>
+    <h3><tt><a name="IOCTL_GET_VCIO_VERSION" id="IOCTL_GET_VCIO_VERSION"></a>IOCTL_GET_VCIO_VERSION (0x800465C0)</tt></h3>
+    <p>Return the vcio2 API version. The high word is the major version, the low word the minor version. Currently <tt>0x00000002</tt>,
+      i.e. 0.2.</p>
+    <pre>uint32_t version;<br>int retval = ioctl(vcio2, IOCTL_GET_VCIO_VERSION, &amp;version);</pre>
+    <h3><tt><a id="IOCTL_MEM_ALLOC" name="IOCTL_MEM_ALLOC"></a>IOCTL_MEM_ALLOCATE (0xC00C6501)</tt></h3>
     <p>Allocate GPU memory. The memory is continuous in physical address and taken from the reserved GPU memory pool.</p>
     <pre>typedef struct
 { union {
@@ -137,6 +141,33 @@
         0</tt> and of course no other process needs QPU power.</p>
     <dl>
     </dl>
+    <h3><tt><a name="IOCTL_SET_V3D_PERF_COUNT" id="IOCTL_SET_V3D_PERF_COUNT"></a>IOCTL_SET_V3D_PERF_COUNT (0x000065c1)</tt></h3>
+    <p>Enable or disable V3D performance counters for this instance.</p>
+    <pre>int retval = ioctl(vcio2, enabled);</pre>
+    <dl>
+      <dt><tt>enabled</tt></dt>
+      <dd>Bit vector of performance counters to activate. Any combination of</dd>
+      <dd>
+        <pre>V3D_PERF_COUNT_QPU_CYCLES_IDLE<br>V3D_PERF_COUNT_QPU_CYCLES_VERTEX_SHADING<br>V3D_PERF_COUNT_QPU_CYCLES_FRAGMENT_SHADING<br>V3D_PERF_COUNT_QPU_CYCLES_VALID_INSTRUCTIONS<br>V3D_PERF_COUNT_QPU_CYCLES_STALLED_TMU<br>V3D_PERF_COUNT_QPU_CYCLES_STALLED_SCOREBOARD<br>V3D_PERF_COUNT_QPU_CYCLES_STALLED_VARYINGS<br>V3D_PERF_COUNT_QPU_INSTRUCTION_CACHE_HITS<br>V3D_PERF_COUNT_QPU_INSTRUCTION_CACHE_MISSES<br>V3D_PERF_COUNT_QPU_UNIFORMS_CACHE_HITS<br>V3D_PERF_COUNT_QPU_UNIFORMS_CACHE_MISSES<br>V3D_PERF_COUNT_TMU_TEXTURE_QUADS_PROCESSED<br>V3D_PERF_COUNT_TMU_TEXTURE_CACHE_MISSES<br>V3D_PERF_COUNT_VPM_CYCLES_STALLED_VDW<br>V3D_PERF_COUNT_VPM_CYCLES_STALLED_VCD<br>V3D_PERF_COUNT_L2C_L2_CACHE_HITS<br>V3D_PERF_COUNT_L2C_L2_CACHE_MISSES</pre>
+      </dd>
+    </dl>
+    <p>Performance counters are a limited resource of VideoCore IV. <em>No more than 16 counters can be activated at the same time.</em><br>
+      Furthermore vcio2 currently does not support switching enabled counters for individual QPU executions of different open driver
+      instances. I.e. no more than 16 counters can be activated at the same time over all vcio2 users. However, if two instances
+      request the same counter it will be physically shared. But every instance has it's own set of counter values. They are only
+      activated when an execution of the own instance is performed. In fact this makes the counter <tt>V3D_PERF_COUNT_QPU_CYCLES_IDLE</tt>
+      somewhat useless since it will not count the time between executions.</p>
+    <h3><tt><a name="IOCTL_GET_V3D_PERF_COUNTIOCTL_GET_V3D_PERF_COUNT" id="IOCTL_GET_V3D_PERF_COUNTIOCTL_GET_V3D_PERF_COUNT"></a>IOCTL_GET_V3D_PERF_COUNT
+        (0x800465c1)</tt></h3>
+    <p>Get currently activated performance counters of this instance.</p>
+    <pre>uint32_t enabled;<br>int retval = ioctl(vcio2, IOCTL_GET_V3D_PERF_COUNT, &amp;enabled);</pre>
+    <h3><tt><a name="IOCTL_READ_V3D_PERF_COUNT" id="IOCTL_READ_V3D_PERF_COUNT"></a>IOCTL_READ_V3D_PERF_COUNT (0x804065c2)</tt></h3>
+    <p>Read all enabled performance counters.</p>
+    <pre>uint32_t counters[16];<br>int retval = ioctl(vcio2, IOCTL_GET_V3D_PERF_COUNT, &amp;counters);</pre>
+    <p>The counter values are returned in ascending order and disabled counters will not have an empty slot. E.g. if you enabled <tt>V3D_PERF_COUNT_QPU_INSTRUCTION_CACHE_HITS|V3D_PERF_COUNT_L2C_L2_CACHE_HITS|V3D_PERF_COUNT_VPM_CYCLES_STALLED_VDW</tt>
+      then you will receive exactly 3 values: <tt>V3D_PERF_COUNT_QPU_INSTRUCTION_CACHE_HITS</tt> in <tt>counters[0], </tt><tt>V3D_PERF_COUNT_VPM_CYCLES_STALLED_VDW</tt>
+      in <tt>counters[1]</tt> and <tt>V3D_PERF_COUNT_L2C_L2_CACHE_HITS</tt> in <tt>counters[2]</tt>. Due to restrictions of
+      VideoCore IV the call will <em>never return more than 16 values</em>.</p>
     <h2><a id="mmap" name="mmap"></a>Memory mapping</h2>
     <p>To be able to access the QPU memory from the ARM cortex you will need map the memory into you physical address space. Simply
       use <tt>mmap</tt> with the vcio2 device handle for this purpose.</p>
@@ -144,7 +175,7 @@
     <dl>
       <dt><tt>base</tt></dt>
       <dd>Physical address of the memory block from <a href="#IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.<br>
-        Note that <tt>mmap</tt> requires base to be aligned at a pages boundary (4092 bytes). Therefore the bit mask.</dd>
+        Note that <tt>mmap</tt> requires base to be aligned at a pages boundary (4096 bytes). Therefore the bit mask.</dd>
       <dt><tt>size</tt></dt>
       <dd>Number of bytes to map. This should be the same than the size passed to <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>.</dd>
       <dt>return value <tt>mem</tt></dt>

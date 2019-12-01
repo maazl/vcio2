@@ -9,7 +9,7 @@
                 				
                 <macros>
                     					
-                    <stringMacro name="kernel_headers" type="VALUE_PATH_ANY" value="/usr/src/linux-headers-4.15.0-65"/>
+                    <stringMacro name="kernel_headers" type="VALUE_PATH_ANY" value="${ProjDirPath}/../usr/src/linux-headers-4.19.66+"/>
                     				
                 </macros>
                 				
