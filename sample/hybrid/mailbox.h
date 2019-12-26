@@ -1,4 +1,5 @@
 /*
+Copyright (c) 2012, Broadcom Europe Ltd.
 Copyright (c) 2019, Marcel Müller
 All rights reserved.
 
@@ -26,8 +27,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 Replacement for mailbox.h of hello_fft.
-Switches to the vcio2 driver that does not require root access.
-
+This version of the file switches to the vcio2 driver when available
+that does not require root access.
+Otherwise the old vcio driver is used. In this case you need to run as root.
 Remember to change the call to mapmem and pass the additional file_desc parameter.
 */
 
