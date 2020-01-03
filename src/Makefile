@@ -1,6 +1,6 @@
 kernelver = $(shell uname -r)
 obj-m := vcio2.o
-ccflags-y := -I$(PWD)/../include
+ccflags-y := -I$(PWD)/../include -Wall
 
 all:
 	make -C /lib/modules/${kernelver}/build M=$(PWD)

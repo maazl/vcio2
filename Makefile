@@ -1,6 +1,6 @@
 srcdir = $(shell pwd)
 module = vcio2
-version = 0.2
+version = 0.3
 
 install:
 	dkms install $(srcdir)
