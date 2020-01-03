@@ -14,12 +14,9 @@
     <h2>Use the GPU with vcio2</h2>
     <ol>
       <li>Open <tt>/dev/vcio2</tt> with <a href="APIref.html#open"><tt>open</tt></a> in read/write mode.</li>
-      <li>Allocate an appropriate amount of GPU memory with <a href="APIref.html#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOCATE</tt></a>.<br>
-        You should allocate large amounts of GPU memory in smaller chunks to avoid fragmentation of free GPU memory.</li>
-      <li>Lock the memory segment with <a href="APIref.html#IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.</li>
-      <li>Map the memory with <a href="APIref.html#mmap"><tt>mmap</tt></a>.</li>
+      <li>Allocate an appropriate amount of GPU memory with <a href="APIref.html#mmap0"><tt>mmap</tt></a>.</li>
       <li>Place the shader code, the uniforms and the control blocks into the allocated GPU memory. Don't forget that the GPU only
-        accepts physical addresses and cannot access the applications memory.<br>
+        accepts bus addresses and cannot access the applications memory.<br>
         <small>Although the GPU can access all physical memory there is no reasonable way to use application memory directly, since
           it may be fragmented in physical memory and the GPU cannot use scatter gather lists.</small></li>
       <li>Run your code on the GPU with <a href="APIref.html#IOCTL_EXEC_QPU"><tt>IOCTL_EXEC_QPU</tt></a>.<br>
@@ -68,7 +65,9 @@
       own folder. It does some stupid computations by applying all available QPU operators to a bunch of constants.</p>
     <h3>Variants</h3>
     <dl>
-      <dt> <tt><b>porting</b></tt> </dt>
+      <dt><tt><b>native</b></tt></dt>
+      <dd>This is the simplest way to use the vcio2 driver. This is <em>recommended for new developments</em> that depend on vcio2.</dd>
+      <dt><tt><b>porting</b></tt> </dt>
       <dd>
         <div>This is the sample application that uses an API closely to the mailbox API of hello_fft. It only routes the method
           calls to the corresponding IOCTLs of vcio2.</div>

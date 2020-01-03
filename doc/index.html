@@ -20,6 +20,9 @@
     <p>Download <a href="../vcio2.tar.bz2">DKMS kernel module, an example and this documentation</a> or view <a href="https://github.com/maazl/vcio2">source
         code @ github</a></p>
     <dl>
+      <dt>V0.3</dt>
+      <dd>Added advanced API for memory allocation/release.<br>
+        Fixed invalid memory mappings after automatic release of GPU memory.</dd>
       <dt>V0.2</dt>
       <dd>Rewrote the driver to support newer RPi kernels.<br>
         Added performance counter support.</dd>
@@ -51,14 +54,10 @@
     </ul>
     <h3>TODOs, known problems</h3>
     <ul>
-      <li><b>Closing the device</b> or unlock of memory <b>leaves invalid memory mappings</b> in the current processes virtual
-        address space.<br>
-        This is a bug. I simply did not find a kernel function to revoke memory mappings so far.</li>
       <li><b>Running hello_fft with small batch size </b><b><i>without</i> the vcio2 driver</b> (i.e. direct V3D register access) <b>but
           <i>after</i> vcio2 has run at least one QPU batch leaves the QPU in an unusable state</b>. Typically QPU interrupts do no
         longer fire and all user shaders get disabled by <tt>V3D_SQRSV</tt> registers. Reason unknown, maybe a firmware bug.</li>
       <li>Power off the QPU after execution timeouts for better error recovery.</li>
-      <li> Implement some higher level functions that do memory allocations, locking and mapping in one step.</li>
     </ul>
     <h2><a name="install"></a>Installation instructions</h2>
     <h3>Prerequisites</h3>

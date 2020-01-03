@@ -11,7 +11,7 @@ all: smitest
 smitest: smitest.o mailbox.o ../shader.o
 	gcc -o $@ -Wall $^
 
-mailbox.c: mailbox.h Makefile
+mailbox.o: mailbox.c mailbox.h Makefile ../../include/soc/bcm2835/vcio2.h
 
 smitest.o: smitest.c ../shader.h mailbox.h Makefile
 

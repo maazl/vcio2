@@ -12,7 +12,7 @@
  */
 
 #define _GNU_SOURCE
-//#define DEBUG
+#define DEBUG
 
 // 1 => vcio2 driver is additional to the kernels vcio driver using dkms.
 // 0 => vcio2 driver replaces the kernels vcio driver. - Currently unsupported!
@@ -48,8 +48,8 @@
 #define DRIVER_NAME "bcm2708_vcio"
 #endif
 
-#define vcio_pr_err(fmt, args...) pr_err("%s: " fmt "\n", DRIVER_NAME, ## args)
-#define vcio_pr_warn(fmt, args...) pr_warn("%s: " fmt "\n", DRIVER_NAME, ## args)
+#define vcio_pr_err(fmt, args...) pr_err("%s ERROR: " fmt "\n", DRIVER_NAME, ## args)
+#define vcio_pr_warn(fmt, args...) pr_warn("%s WARN: " fmt "\n", DRIVER_NAME, ## args)
 #define vcio_pr_info(fmt, args...) pr_info("%s: " fmt "\n", DRIVER_NAME, ## args)
 #define vcio_pr_debug(fmt, args...) pr_devel("%s: " fmt "\n", DRIVER_NAME, ## args)
 
@@ -84,295 +84,135 @@ static unsigned vcio_enabled_count = 0;
 /// Each value consists of the counter index in bits [28..31] and the use count in the lower bits.
 /// The array index is the counter id - 13
 static unsigned vcio_perf_count_map[17] = {0};
+/// Access performance counter id.
+/// @param id Counter id, in range [13,29]
 #define vcio_perf_count(id) vcio_perf_count_map[(id)-13]
+/// Extract performance counter index, i.e. the V3D register number, from map entry.
 #define VCIO_PERF_COUNT_INDEX(map) ((map) >> 28)
+/// Extract performance counter usage count from map entry.
 #define VCIO_PERF_COUNT_USAGE(map) ((map) & ((1<<28)-1))
-#define VCIO_PERF_COUNT_MAP(id) ((id) << 28)
+/// Construct map entry with usage count 0 from counter index.
+#define VCIO_PERF_COUNT_MAP(ix) ((ix) << 28)
 
-#define mailbox_property(tag) rpi_firmware_property_list(firmware, &tag, sizeof (tag));
-
-
-static uint32_t GetBoardRevision(void)
-{
-	struct vc_tag
-	{
-		uint32_t m_tagId;
-		uint32_t m_bufSize;
-		uint32_t m_dataSize;
-
-		uint32_t m_model;
-	} tag;
-	int s;
-
-	//fill in the tag for the allocation command
-	tag.m_tagId = RPI_FIRMWARE_GET_BOARD_REVISION;
-	tag.m_bufSize = 4;
-	tag.m_dataSize = 0;
-
-	//run the command
-	s = mailbox_property(tag);
-
-	if (s == 0 && tag.m_dataSize == 0x80000004)
-		return tag.m_model;
-	else
-	{
-		vcio_pr_warn("Failed to get board revision: s=%d recv data size=%08x", s, tag.m_dataSize);
-		return 0;
-	}
-}
-
-static uint32_t AllocateVcMemory(uint32_t *pHandle, uint32_t size, uint32_t alignment, uint32_t flags)
-{
-	struct vc_tag
-	{
-		uint32_t m_tagId;
-		uint32_t m_bufSize;
-		uint32_t m_dataSize;
-
-		struct args
-		{
-			union {
-				uint32_t m_size;
-				uint32_t m_handle;
-			};
-			uint32_t m_alignment;
-			uint32_t m_flags;
-		} m_args;
-	} tag;
-	int s;
-
-	//fill in the tag for the allocation command
-	tag.m_tagId = RPI_FIRMWARE_ALLOCATE_MEMORY;
-	tag.m_dataSize = tag.m_bufSize = 12;
-
-	//fill in our args
-	tag.m_args.m_size = size;
-	tag.m_args.m_alignment = alignment;
-	tag.m_args.m_flags = flags;
-
-	//run the command
-	s = mailbox_property(tag);
-
-	if (s == 0 && tag.m_dataSize == 0x80000004)
-	{
-		*pHandle = tag.m_args.m_handle;
-		return 0;
-	}
-	else
-	{
-		vcio_pr_warn("Failed to allocate VC memory: s=%d recv data size=%08x", s, tag.m_dataSize);
-		return s ? s : 1;
-	}
-}
-
-static uint32_t ReleaseVcMemory(uint32_t handle)
-{
-	struct vc_tag
-	{
-		uint32_t m_tagId;
-		uint32_t m_bufSize;
-		uint32_t m_dataSize;
-
-		struct args
-		{
-			union {
-				uint32_t m_handle;
-				uint32_t m_error;
-			};
-		} m_args;
-	} tag;
-	int s;
-
-	//fill in the tag for the release command
-	tag.m_tagId = RPI_FIRMWARE_RELEASE_MEMORY;
-	tag.m_dataSize = tag.m_bufSize = 4;
-
-	//pass across the handle
-	tag.m_args.m_handle = handle;
-
-	s = mailbox_property(tag);
-
-	if (s == 0 && tag.m_dataSize == 0x80000004 && tag.m_args.m_error == 0)
-		return 0;
-	else
-	{
-		vcio_pr_warn("Failed to release VC memory: rc=%i recv data size=%08x error=%08x", s, tag.m_dataSize, tag.m_args.m_error);
-		return s ? s : 1;
-	}
-}
-
-static uint32_t LockVcMemory(uint32_t *pBusAddress, uint32_t handle)
-{
-	struct vc_tag
-	{
-		uint32_t m_tagId;
-		uint32_t m_bufSize;
-		uint32_t m_dataSize;
-
-		struct args
-		{
-			union {
-				uint32_t m_handle;
-				uint32_t m_busAddress;
-			};
-		} m_args;
-	} tag;
-	int s;
-
-	//fill in the tag for the lock command
-	tag.m_tagId = RPI_FIRMWARE_LOCK_MEMORY;
-	tag.m_dataSize = tag.m_bufSize = 4;
-
-	//pass across the handle
-	tag.m_args.m_handle = handle;
-
-	s = mailbox_property(tag);
-
-	if (s == 0 && tag.m_dataSize == 0x80000004)
-	{
-		//pick out the bus address
-		*pBusAddress = tag.m_args.m_busAddress;
-		return 0;
-	}
-	else
-	{
-		vcio_pr_warn("Failed to lock VC memory: s=%d recv data size=%08x", s, tag.m_dataSize);
-		return s ? s : 1;
-	}
-}
-
-static uint32_t UnlockVcMemory(uint32_t handle)
-{
-	struct vc_tag
-	{
-		uint32_t m_tagId;
-		uint32_t m_bufSize;
-		uint32_t m_dataSize;
-
-		struct args
-		{
-			union {
-				uint32_t m_handle;
-				uint32_t m_error;
-			};
-		} m_args;
-	} tag;
-	int s;
-
-	//fill in the tag for the unlock command
-	tag.m_tagId = RPI_FIRMWARE_UNLOCK_MEMORY;
-	tag.m_dataSize = tag.m_bufSize = 4;
-
-	//pass across the handle
-	tag.m_args.m_handle = handle;
-
-	s = mailbox_property(tag);
-
-	//check the error code too
-	if (s == 0 && tag.m_dataSize == 0x80000004 && tag.m_args.m_error == 0)
-		return 0;
-	else
-	{
-		vcio_pr_warn("Failed to unlock VC memory: s=%d recv data size=%08x error%08x", s, tag.m_dataSize, tag.m_args.m_error);
-		return s ? s : 1;
-	}
-}
-
-static uint32_t QpuEnable(unsigned enable)
-{
-	struct vc_tag
-	{
-		uint32_t m_tagId;
-		uint32_t m_bufSize;
-		uint32_t m_dataSize;
-
-		struct args
-		{
-			union {
-				uint32_t m_enable;
-				uint32_t m_return;
-			};
-		} m_args;
-	} tag;
-	int s;
-
-	vcio_pr_debug("%s %d", __func__, enable);
-
-	/* property message to VCIO channel */
-	tag.m_tagId = RPI_FIRMWARE_SET_ENABLE_QPU;
-	tag.m_dataSize = tag.m_bufSize = 4;
-
-	s = mailbox_property(tag);
-
-	//check the error code too
-	if (s == 0 && tag.m_dataSize == 0x80000004)
-		return tag.m_args.m_return;
-	else
-	{
-		vcio_pr_warn("Failed to execute QPU: s=%d recv data size=%08x", s, tag.m_dataSize);
-		return s;
-	}
-}
-
-static uint32_t ExecuteQpu(uint32_t num_qpus, uint32_t control, uint32_t noflush, uint32_t timeout)
-{
-	struct vc_tag
-	{
-		uint32_t m_tagId;
-		uint32_t m_bufSize;
-		uint32_t m_dataSize;
-
-		struct args
-		{
-			union {
-				uint32_t m_numQpus;
-				uint32_t m_return;
-			};
-			uint32_t m_control;
-			uint32_t m_noflush;
-			uint32_t m_timeout;
-		} m_args;
-	} tag;
-	int s;
-
-	vcio_pr_debug("%s(%d, %x, %d, %d)", __func__, num_qpus, control, noflush, timeout);
-
-	/* property message to VCIO channel */
-	tag.m_tagId = RPI_FIRMWARE_EXECUTE_QPU;
-	tag.m_dataSize = tag.m_bufSize = 16;
-
-	//pass across the handle
-	tag.m_args.m_numQpus = num_qpus;
-	tag.m_args.m_control = control;
-	tag.m_args.m_noflush = noflush;
-	tag.m_args.m_timeout = timeout;
-
-	s = mailbox_property(tag);
-
-	//check the error code too
-	if (s == 0 && tag.m_dataSize == 0x80000004)
-		return tag.m_args.m_return;
-	else
-	{
-		vcio_pr_warn("Failed to execute QPU: s=%d recv data size=%08x", s, tag.m_dataSize);
-		return s;
-	}
-}
+// Mailbox functions
+#include "vcio2.mailbox.c"
 
 /** allocation entry */
 typedef struct
-{	unsigned Handle;  /**< List of currently active allocation handles */
-	unsigned Size;    /**< Size of the Segment in bytes */
-	unsigned Location;/**< Memory segment is locked to this physical address */
+{	uint32_t Handle;  /**< Allocation handle from firmware, automatic allocations additionally have the highest bit set. */
+	uint32_t Size;    /**< Size of the memory segment in bytes */
+	uint32_t Location;/**< Bus address of locked memory segment or VCIOA_LOCATION_NONE if not locked */
+	unsigned long Mappings[3];/**< Virtual address in user space of memory mappings for this allocation, VCIOA_LOCATION_NONE for empty slots. */
 } vcio_alloc;
 
 #define VCIOA_LOCATION_NONE 0xffffffff
 
+/** Find virtual address mapping slot.
+ * @param vca Allocation entry to search for.
+ * @param start Search for this address (in user space)
+ * or pass VCIOA_LOCATION_NONE to search an empty entry. The LAST free entry will be returned in this case.
+ * @return Pointer to the matching entry or NULL if no matching entry found. */
+static unsigned long* vcioa_find_mapping(vcio_alloc* vca, unsigned long start)
+{	unsigned long* mp = vca->Mappings + sizeof vca->Mappings / sizeof *vca->Mappings - 1;
+	/*for (; *mp != start; --mp)
+		if (mp == vca->Mappings)
+			return NULL;
+	return mp;
+	... unrolled: */
+	return *mp == start ? mp
+		: *--mp == start ? mp
+		: *--mp == start ? mp
+		: NULL;
+}
+
+/** Find virtual address mapping slot by address range.
+ * @param vca Allocation entry to search for.
+ * @param addr Search for this start address (in user space).
+ * @param size Search for a range of size bytes starting at start.
+ * @return Pointer to the matching entry or NULL if no matching entry found. */
+static unsigned long* vcioa_find_mapping_range(vcio_alloc* vca, unsigned long addr, unsigned long size)
+{	unsigned long* mp = vca->Mappings + sizeof vca->Mappings / sizeof *vca->Mappings - 1;
+	size += addr;
+	/*for (; *mp > addr || *mp + vca->Size < size; --mp)
+		if (mp == vca->Mappings)
+			return NULL;
+	return mp;
+	... unrolled: */
+	return *mp < addr && *mp + vca->Size > size ? mp
+		: *--mp < addr && *mp + vca->Size > size ? mp
+		: *--mp < addr && *mp + vca->Size > size ? mp
+		: NULL;
+}
+
+/** Return first virtual user space address of allocated memory.
+ * @param vca Allocation entry
+ * @return Virtual address of this memory block in user space or VCIOA_LOCATION_NONE if none.
+ */
+static unsigned long vcioa_get_first_mapping(const vcio_alloc* vca)
+{	const unsigned long* mp = vca->Mappings + sizeof vca->Mappings / sizeof *vca->Mappings - 1;
+	/*for (; *mp != VCIOA_LOCATION_NONE; --mp)
+		if (mp == vca->Mappings)
+			return VCIOA_LOCATION_NONE;
+	return *mp;
+	... unrolled: */
+	if (*mp == VCIOA_LOCATION_NONE && *--mp == VCIOA_LOCATION_NONE)
+		--mp;
+	return *mp;
+}
+
+/** Lock GPU memory at a fixed address.
+ * @param vca Allocation entry to lock. The returned physical address is written to vca->Location.
+ * @return Return value from LockVcMemory. */
+static uint32_t vcioa_lock_mem(vcio_alloc* vca)
+{	if (unlikely(vca->Location != VCIOA_LOCATION_NONE))
+	{	vcio_pr_info("Tried to lock memory %x twice (at %x)", vca->Handle, vca->Location);
+		return vca->Location;
+	}
+	return LockVcMemory(&vca->Location, vca->Handle & 0x7fffffff);
+}
+
+/** Unlock GPU memory and revoke any existing memory mappings to this block.
+ * @param vca Allocation entry to unlock.
+ * @param mm Memory management context of the user space process.
+ * @return Return value from UnlockVcMemory. */
+static uint32_t vcioa_unlock_mem(vcio_alloc* vca, struct mm_struct* mm)
+{	char have_sem = 0;
+	uint32_t rc;
+	vcio_pr_debug("%s(%p{%x, %x[%x]}, %p)", __func__, vca, vca->Handle, vca->Location, vca->Size, mm);
+	if (likely(mm))
+	{	unsigned long* mp = vca->Mappings;
+		unsigned long* mpe = mp + sizeof vca->Mappings / sizeof *vca->Mappings;
+		do
+		{	struct vm_area_struct* vma;
+			vcio_pr_debug("mapping: %lx", *mp);
+			if (*mp != VCIOA_LOCATION_NONE)
+			{	if (!have_sem)
+				{	have_sem = 1;
+					down_write(&mm->mmap_sem);
+				}
+				vma = find_vma(mm, *mp);
+				vcio_pr_debug("find_vma(%lx): %p{%lx}", *mp, vma, vma ? vma->vm_start : 0);
+				if (likely(vma && vma->vm_start == *mp))
+				{	zap_vma_ptes(vma, vma->vm_start, vma->vm_end - vma->vm_start);
+					*mp = VCIOA_LOCATION_NONE;
+				}
+			}
+		} while (++mp != mpe);
+	}
+	if (have_sem)
+		up_write(&mm->mmap_sem);
+	rc = UnlockVcMemory(vca->Handle & 0x7fffffff);
+	if (likely(!rc))
+		vca->Location = VCIOA_LOCATION_NONE;
+	return rc;
+}
+
 /** dynamic array of allocation entries */
 typedef struct
-{	vcio_alloc* List; /**< List of currently active allocation handles */
-	unsigned    Count;/**< Number of Entries in the list above */
-	unsigned    Size; /**< Allocated number of entries in the list above */
+{	vcio_alloc* List;    /**< List of currently active allocation handles */
+	unsigned    Count;   /**< Number of Entries in the list above */
+	unsigned    Size;    /**< Allocated number of entries in the list above */
+	struct mm_struct* MM;/**< Memory management root of the owner process, might be NULL */
 } vcio_allocs;
 
 /** Insert empty slot in vcio_allocs collection.
@@ -390,7 +230,7 @@ static vcio_alloc* vcioa_insert(vcio_allocs* allocs, unsigned pos)
 		void* ptr;
 		allocs->Size = (allocs->Size << 1) + 10;
 		ptr = krealloc(allocs->List, allocs->Size * sizeof *allocs->List, GFP_KERNEL);
-		if (!ptr)
+		if (unlikely(!ptr))
 			return NULL;
 		allocs->List = ptr;
 	}
@@ -403,15 +243,11 @@ static vcio_alloc* vcioa_insert(vcio_allocs* allocs, unsigned pos)
 
 /** Remove an entry from vcio_allocs collection.
  * @param allocs Allocation collection.
- * @param pos Index of the entry to remove. Must be in [0,allocs->Count].
- */
-static void vcioa_delete(vcio_allocs* allocs, unsigned pos)
-{
-	vcio_alloc* dp;
-	vcio_pr_debug("%s(%p{%p,%u,%u}, %u)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, pos);
-	dp = allocs->List + pos;
+ * @param vca Entry to remove. */
+static void vcioa_delete(vcio_allocs* allocs, vcio_alloc* vca)
+{	vcio_pr_debug("%s(%p{%p,%u,%u}, %p)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, vca);
 	--allocs->Count;
-	memmove(dp + 1, dp, (allocs->Count - pos) * sizeof *allocs->List);
+	memmove(vca + 1, vca, (char*)(allocs->List + allocs->Count) - (char*)vca);
 }
 
 /** Locate memory handle in vcio_allocs.
@@ -419,14 +255,13 @@ static void vcioa_delete(vcio_allocs* allocs, unsigned pos)
  * @param handle Memory handle to search for.
  * @return Location in allocs->List if found or
  * 2's complement of the location where it should be inserted if not found. */
-static int vcioa_find_handle(const vcio_allocs* allocs, unsigned handle)
-{
-	unsigned l = 0;
+static int vcioa_find_handle(const vcio_allocs* allocs, uint32_t handle)
+{	unsigned l = 0;
 	unsigned r = allocs->Count;
 	vcio_pr_debug("%s(%p{%p,%u,%u}, %x)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, handle);
 	while (l < r)
 	{	unsigned m = (l + r) >> 1;
-		unsigned h = allocs->List[m].Handle;
+		uint32_t h = allocs->List[m].Handle & 0x7fffffff;
 		if (handle < h)
 			r = m;
 		else if (handle > h)
@@ -438,42 +273,135 @@ static int vcioa_find_handle(const vcio_allocs* allocs, unsigned handle)
 
 /** Look for an entry that contains a certain physical memory address.
  * @param allocs Allocation collection.
- * @param addr Address to search for.
+ * @param addr Bus address or physical address to search for. Caching bits are ignored.
  * @return Pointer to an allocation entry that contains the specified address
- * or NULL if none is found.
- */
-static vcio_alloc* vcioa_find_addr(const vcio_allocs* allocs, unsigned addr)
-{
-	vcio_alloc* ap;
+ * or NULL if none is found. */
+static vcio_alloc* vcioa_find_addr(const vcio_allocs* allocs, uint32_t addr)
+{	vcio_alloc* ap;
 	vcio_alloc* ape;
 	vcio_pr_debug("%s(%p{%p,%u,%u}, %x)", __func__, allocs, allocs->List, allocs->Count, allocs->Size, addr);
+	addr &= VC_MEM_TO_ARM_ADDR_MASK;
 
 	ap = allocs->List;
 	ape = ap + allocs->Count;
 	for (; ap != ape; ++ap)
-	{	vcio_pr_debug("%s {%u,%x,%x}", __func__, ap->Handle, ap->Size, ap->Location);
-		if (ap->Location != VCIOA_LOCATION_NONE && addr >= ap->Location && addr < ap->Location + ap->Size)
+	{	uint32_t loc = ap->Location;
+		vcio_pr_debug("%s {%x,%x,%x}", __func__, ap->Handle, ap->Size, loc);
+		if (loc != VCIOA_LOCATION_NONE && addr >= (loc &= VC_MEM_TO_ARM_ADDR_MASK) && addr < loc + ap->Size)
 			return ap;
 	}
 	return NULL;
 }
 
-/** Discard all remaining allocations in a vcio_allocs container.
+/** Allocate GPU memory
  * @param allocs Allocation collection.
- */
-static void vcioa_destroy(vcio_allocs* allocs)
-{
+ * @param size Number of bytes to allocate
+ * @param alignment Desired alignment
+ * @param flags Allocation flags
+ * @return Allocation info just created or NULL in case of an error (out of memory). */
+static vcio_alloc* vcioa_alloc_mem(vcio_allocs* allocs, uint32_t size, uint32_t alignment, uint32_t flags)
+{	uint32_t handle;
+	int pos;
 	vcio_alloc* ap;
+	vcio_pr_debug("%s(%p, %x, %x, %x)", __func__, allocs, size, alignment, flags);
+	if (unlikely(AllocateVcMemory(&handle, size, alignment, flags)))
+		return NULL;
+	if (unlikely((pos = vcioa_find_handle(allocs, handle)) >= 0))
+	{	vcio_pr_err("allocated handle %d twice ???", handle);
+	err:
+		ReleaseVcMemory(handle);
+		return NULL;
+	}
+	if (unlikely((ap = vcioa_insert(allocs, ~pos)) == NULL))
+		goto err;
+	// success
+	ap->Handle = handle;
+	ap->Size = size;
+	ap->Mappings[2] = ap->Mappings[1] = ap->Mappings[0] = ap->Location = VCIOA_LOCATION_NONE;
+	vcio_pr_debug("%s: {%x, %x, }", __func__, ap->Handle, ap->Size);
+	return ap;
+}
+
+/** Release VC memory and remove allocation info.
+ * @param allocs
+ * @param vca Allocation block to release.
+ * @return Return code from ReleaseVcMemory */
+static uint32_t vcioa_release_mem(vcio_allocs* allocs, vcio_alloc* vca)
+{	uint32_t rc;
+	if (vca->Location != VCIOA_LOCATION_NONE)
+		vcioa_unlock_mem(vca, allocs->MM);
+	rc = ReleaseVcMemory(vca->Handle & 0x7fffffff);
+	if (likely(!rc))
+		vcioa_delete(allocs, vca);
+	return rc;
+}
+
+/** Query memory range
+ * @param allocs
+ * @param query
+ * @return 0: success, EINVAL: no valid range
+ */
+static int vcioa_query_mem(vcio_allocs* allocs, vcio_mem_query* query)
+{	vcio_alloc* vca;
+	vcio_pr_debug("%s(%p, {%x,%x,%p,%x})", __func__, allocs, query->handle, query->bus_addr, query->virt_addr, query->size);
+
+	if (query->handle) // have handle
+	{	int pos = vcioa_find_handle(allocs, query->handle);
+		if (pos < 0)
+			return -EINVAL;
+		vca = allocs->List + pos;
+
+		if (query->bus_addr && vca->Location != query->bus_addr)
+			return -EINVAL;
+	}
+	else if (query->bus_addr) // have bus address
+	{	vca = vcioa_find_addr(allocs, query->bus_addr);
+		if (!vca)
+			return -EINVAL;
+		query->handle = vca->Handle & 0x7fffffff;
+	}
+	else if (query->virt_addr) // have only virtual address
+	{	vcio_alloc* ape = (vca = allocs->List) + allocs->Count;
+		unsigned long* mp;
+		do if (vca == ape)
+			return -EINVAL;
+		while (vca->Location == VCIOA_LOCATION_NONE || !(mp = vcioa_find_mapping_range(vca, (unsigned long)query->virt_addr, query->size)));
+
+		query->virt_addr = (void*)*mp;
+		goto done;
+	}
+	else
+		return -EINVAL;
+
+	if (query->virt_addr)
+	{	unsigned long* mp = vcioa_find_mapping_range(vca, (unsigned long)query->virt_addr, query->size);
+		if (!mp)
+			return -EINVAL;
+		query->virt_addr = (void*)*mp;
+	} else
+	{	if (query->size > vca->Size)
+			return -EINVAL;
+		query->virt_addr = (void*)vcioa_get_first_mapping(vca);
+	}
+
+done:
+	query->bus_addr = vca->Location;
+	query->size = vca->Size;
+	return 0;
+}
+
+/** Discard vcio_allocs container (destructor). */
+static void vcioa_destroy(vcio_allocs* allocs)
+{	vcio_alloc* ap;
 	vcio_alloc* ape;
-	vcio_pr_debug("%s(%p{%p,%u,%u})", __func__, allocs, allocs->List, allocs->Count, allocs->Size);
+	vcio_pr_debug("%s(%p{%p,%u,%u, %p})", __func__, allocs, allocs->List, allocs->Count, allocs->Size, allocs->MM);
 	/* clean up memory resources */
 	ap = allocs->List;
 	ape = ap + allocs->Count;
 	for (; ap != ape; ++ap)
-	{	vcio_pr_info("cleanup GPU memory: %x @ %x[%x]", ap->Handle, ap->Location, ap->Size);
-		if (ap->Location != VCIOA_LOCATION_NONE)
-			UnlockVcMemory(ap->Handle);
-		ReleaseVcMemory(ap->Handle);
+	{	if (ap->Location != VCIOA_LOCATION_NONE)
+			vcioa_unlock_mem(ap, allocs->MM);
+		ReleaseVcMemory(ap->Handle & 0x7fffffff);
 	}
 
 	kfree(allocs->List);
@@ -503,9 +431,7 @@ static vcio_data* vcio_create(void)
 	return data;
 }
 
-/** destroy vcio_data and release all occupied resources.
- * @param data vcio_data structure.
- */
+/** destroy vcio_data and release all occupied resources. */
 static void vcio_destroy(vcio_data* data)
 {
 	mutex_destroy(&data->Lock);
@@ -548,7 +474,7 @@ static int vcio_set_perf_count_enable(vcio_data* data, uint32_t counters)
 	uint32_t new = 0;
 	uint32_t free;
 
-	if (counters & ~0x3fffe000)
+	if (unlikely(counters & ~0x3fffe000))
 		return -EINVAL;
 	if (!changed)
 		return 0;
@@ -582,7 +508,7 @@ static int vcio_set_perf_count_enable(vcio_data* data, uint32_t counters)
 		if (VCIO_PERF_COUNT_USAGE(vcio_perf_count(id)))
 			continue; // already in use
 		// find free slot
-		if (!free)
+		if (unlikely(!free))
 		{	mutex_unlock(&vcio_lock);
 			return -EBUSY; // too many performance counters
 		}
@@ -659,9 +585,10 @@ static int device_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
+/** This is called whenever a process attempts to close the device file */
 static int device_release(struct inode *inode, struct file *file)
 {
-	vcio_pr_info("closing vcio %p, %p", inode, file);
+	vcio_pr_info("closing vcio %p, %p{as={%lu}}", inode, file, file->f_mapping->nrpages);
 
 	if (file->private_data)
 	{	vcio_set_perf_count_enable(file->private_data, 0);
@@ -680,8 +607,7 @@ static int device_release(struct inode *inode, struct file *file)
  * and the parameter given to the ioctl function.
  *
  * If the ioctl is write or read/write (meaning output is returned to the
- * calling process), the ioctl call returns the output of this function.
- */
+ * calling process), the ioctl call returns the output of this function. */
 static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 		 unsigned int ioctl_num,	/* number and param for ioctl */
 		 unsigned long ioctl_param)
@@ -715,103 +641,81 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 					mutex_unlock(&data->Lock);
 					goto fail;
 
-				mem_read_fault:
+				mem_fault:
 					rc = -EFAULT;
 					break;
 
+				case IOCTL_GET_VCIO_VERSION:
+					rc = VCIO2_VERSION_NUMBER;
+					break;
+
 				case IOCTL_MEM_ALLOCATE:
-				{
-					vcio_mem_allocate p;
+				{	vcio_mem_allocate p;
 					vcio_alloc* ap;
-					unsigned size;
-					if (copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in))
-						goto mem_read_fault;
-					size = p.in.size;
-					vcio_pr_debug("IOCTL_MEM_ALLOCATE %x, %x, %x", size, p.in.alignment, p.in.flags);
-					if (AllocateVcMemory(&p.out.handle, size, p.in.alignment, p.in.flags))
-					{	p.out.handle = 0;
+					if (unlikely(copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in)))
+						goto mem_fault;
+					ap = vcioa_alloc_mem(&data->Allocations, p.in.size, p.in.alignment, p.in.flags);
+					if (unlikely(!ap))
 						rc = -ENOMEM;
-					} else if ((pos = vcioa_find_handle(&data->Allocations, p.out.handle)) >= 0)
-					{	vcio_pr_err("allocated handle %d twice ???", p.out.handle);
-						ReleaseVcMemory(p.out.handle);
-						p.out.handle = 0;
-						rc = -EINVAL;
-					} else if ((ap = vcioa_insert(&data->Allocations, ~pos)) == NULL)
-					{	ReleaseVcMemory(p.out.handle);
-						p.out.handle = 0;
-						rc = -ENOMEM;
-					} else
-					{	/* success */
-						ap->Handle = p.out.handle;
-						ap->Size = size;
-						ap->Location = VCIOA_LOCATION_NONE;
-						vcio_pr_debug("IOCTL_MEM_ALLOCATE: {%d, %x, }", ap->Handle, ap->Size);
+					else
+					{	p.out.handle = ap->Handle;
+						if (unlikely(copy_to_user((void*)ioctl_param, &p.out, sizeof p.out)))
+							goto mem_fault;
 					}
-					if (copy_to_user((void*)ioctl_param, &p.out, sizeof p.out))
-						rc = -EFAULT;
 					break;
 				}
 
 				case IOCTL_MEM_RELEASE:
-				{
-					vcio_pr_debug("IOCTL_MEM_RELEASE: %x", (unsigned)ioctl_param);
-					pos = vcioa_find_handle(&data->Allocations, ioctl_param);
-					if (pos < 0)
-						rc = -EBADF;
-					else
-					{	vcio_alloc* ap = data->Allocations.List + pos;
-						if (ap->Location != VCIOA_LOCATION_NONE)
-							UnlockVcMemory(ap->Handle);
-						if (ReleaseVcMemory(ioctl_param))
-							rc = -ENOMEM;
-						else
-							vcioa_delete(&data->Allocations, pos);
-					}
+				{	vcio_pr_debug("IOCTL_MEM_RELEASE: %x", (unsigned)ioctl_param);
+					pos = vcioa_find_handle(&data->Allocations, (uint32_t)ioctl_param);
+					if (unlikely(pos < 0))
+						rc = -EINVAL;
+					else if (unlikely(vcioa_release_mem(&data->Allocations, data->Allocations.List + pos)))
+						rc = -ENOMEM;
 					break;
 				}
 
 				case IOCTL_MEM_LOCK:
-				{
-					unsigned param;
-					if (copy_from_user(&param, (void*)ioctl_param, sizeof param))
-						goto mem_read_fault;
+				{	uint32_t param;
+					if (unlikely(copy_from_user(&param, (void*)ioctl_param, sizeof param)))
+						goto mem_fault;
 					vcio_pr_debug("IOCTL_MEM_LOCK %x", param);
-					pos = vcioa_find_handle(&data->Allocations, param);
-					if (pos < 0)
-						rc = -EBADF;
+					pos = vcioa_find_handle(&data->Allocations, (uint32_t)param);
+					if (unlikely(pos < 0))
+						rc = -EINVAL;
 					else
 					{	vcio_alloc* ap = data->Allocations.List + pos;
-						if (ap->Location != VCIOA_LOCATION_NONE)
-						{	pr_info(DRIVER_NAME ": tried to lock memory %d twice (at %x)\n", ap->Handle, ap->Location);
-							param = ap->Location;
-						} else if (LockVcMemory(&param, ap->Handle))
-						{	param = 0;
+						if (unlikely(vcioa_lock_mem(ap)))
 							rc = -ENOMEM;
-						} else
-							ap->Location = param & VC_MEM_TO_ARM_ADDR_MASK;
+						else if (unlikely(copy_to_user((void*)ioctl_param, &ap->Location, sizeof param)))
+							goto mem_fault;
 					}
-					vcio_pr_debug("IOCTL_MEM_LOCK: %x", param);
-					if (copy_to_user((void*)ioctl_param, &param, sizeof param))
-						rc = -EFAULT;
 					break;
 				}
 
 				case IOCTL_MEM_UNLOCK:
-				{
-					vcio_pr_debug("IOCTL_MEM_UNLOCK %x", (unsigned)ioctl_param);
+				{	vcio_pr_debug("IOCTL_MEM_UNLOCK %x", (unsigned)ioctl_param);
 					pos = vcioa_find_handle(&data->Allocations, ioctl_param);
-					if (pos < 0)
-						rc = -EBADF;
+					if (unlikely(pos < 0))
+						rc = -EINVAL;
 					else
 					{	vcio_alloc* ap = data->Allocations.List + pos;
-						if (ap->Location == VCIOA_LOCATION_NONE)
-						{	vcio_pr_warn("tried to unlock unlocked memory %d", ap->Handle);
+						if (unlikely(ap->Location == VCIOA_LOCATION_NONE))
+						{	vcio_pr_warn("Tried to unlock memory that is not locked %x", ap->Handle);
 							rc = -EPERM;
-						} else if (UnlockVcMemory(ap->Handle))
+						} else if (unlikely(vcioa_unlock_mem(ap, data->Allocations.MM)))
 							rc = -ENOMEM;
-						else
-							ap->Location = VCIOA_LOCATION_NONE;
 					}
+					break;
+				}
+
+				case IOCTL_MEM_QUERY:
+				{	vcio_mem_query q;
+					if (unlikely(copy_from_user(&q, (void*)ioctl_param, sizeof q)))
+						goto mem_fault;
+					rc = vcioa_query_mem(&data->Allocations, &q);
+					if (unlikely(!rc && copy_to_user((void*)ioctl_param, &q, sizeof q)))
+						goto mem_fault;
 					break;
 				}
 
@@ -823,13 +727,13 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 
 				case IOCTL_EXEC_QPU:
 				{	vcio_exec_qpu p;
-					if (copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in))
-						goto mem_read_fault;
-					vcio_pr_debug("IOCTL_EXEC_QPU %x, %x, %x, %x", p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout);
+					if (unlikely(copy_from_user(&p, (void*)ioctl_param, sizeof p)))
+						goto mem_fault;
+					vcio_pr_debug("IOCTL_EXEC_QPU %x, %x, %x, %x", p.num_qpus, p.control, p.noflush, p.timeout);
 					/* verify starting point */
-					if (!vcioa_find_addr(&data->Allocations, p.in.control & VC_MEM_TO_ARM_ADDR_MASK))
+					if (unlikely(!vcioa_find_addr(&data->Allocations, p.control & VC_MEM_TO_ARM_ADDR_MASK)))
 						rc = -EACCES;
-					else if ((rc = vcio_set_enabled(data, 1)) == 0)
+					else if (likely((rc = vcio_set_enabled(data, 1)) == 0))
 					{	/* TODO: verify starting points of code and uniforms too
 						for (i = 0; i < p.in.num_qpus; ++i)
 						{	if (!vcioa_find_addr(&data->Allocations, ))
@@ -837,19 +741,10 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 						}*/
 
 						vcio_read_perf_count(data, -1);
-
-						if (ExecuteQpu(p.in.num_qpus, p.in.control, p.in.noflush, p.in.timeout))
+						if (unlikely(ExecuteQpu(p.num_qpus, p.control, p.noflush, p.timeout)))
 							rc = -ENOEXEC;
-
 						vcio_read_perf_count(data, 1);
 					}
-					break;
-				}
-
-				case IOCTL_GET_VCIO_VERSION:
-				{	uint32_t version = 0x00000002; // 0.2
-					if (copy_to_user((void*)ioctl_param, &version, sizeof version))
-						rc = -EFAULT;
 					break;
 				}
 
@@ -860,20 +755,20 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				}
 
 				case IOCTL_GET_V3D_PERF_COUNT:
-				{	if (copy_to_user((void*)ioctl_param, &data->CountersEnabled, sizeof(uint32_t)))
-						rc = -EFAULT;
+				{	if (unlikely(copy_to_user((void*)ioctl_param, &data->CountersEnabled, sizeof(uint32_t))))
+						goto mem_fault;
 					break;
 				}
 
 				case IOCTL_READ_V3D_PERF_COUNT:
 				{	vcio_pr_debug("case IOCTL_READ_V3D_PERF_COUNT %p, %x", (void*)ioctl_param, data->CountersEnabled);
-					if (!data->CountersEnabled)
+					if (unlikely(!data->CountersEnabled))
 						rc = -ENODATA;
 					else
 					{	uint32_t counters[V3D_MAX_PERF_CONUT];
 						unsigned size = (char*)vcio_fetch_perf_count(data, counters) - (char*)counters;
-						if (copy_to_user((void*)ioctl_param, counters, size))
-							rc = -EFAULT;
+						if (unlikely(copy_to_user((void*)ioctl_param, counters, size)))
+							goto mem_fault;
 					}
 					break;
 				}
@@ -888,37 +783,70 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 		}
 	}
 fail:
-	vcio_pr_warn("unknown ioctl: %d, minor = %d", ioctl_num, MINOR(f->f_inode->i_rdev));
+	vcio_pr_warn("unknown ioctl: %x, minor = %d", ioctl_num, MINOR(f->f_inode->i_rdev));
 	return -EINVAL;
 }
 
+/** Callback when a process unmaps GPU memory allocated by this device. */
+static void vma_close(struct vm_area_struct * vma)
+{
+	vcio_data* data;
+	uint32_t start;
+	vcio_alloc* vca;
+	unsigned long* mapping;
+	vcio_pr_debug("%s(%p{%lx,%lx,%lx,%p})", __func__, vma, vma->vm_start, vma->vm_end, vma->vm_pgoff, vma->vm_file);
+	data = vma->vm_file->private_data;
+	// Accept bus address as well. Won't work on Pi 4, but this one has no VideoCore IV anyway.
+	start = (vma->vm_pgoff << PAGE_SHIFT) & VC_MEM_TO_ARM_ADDR_MASK;
+	// Allow RPi1 memory alias without VC4 cache.
+	if (vcio_model1)
+		start &= ~0x20000000;
+	// undo remember mapping
+	mutex_lock(&data->Lock);
+	vca = vcioa_find_addr(&data->Allocations, start);
+	if (unlikely(!vca))
+		vcio_pr_warn("Closing unknown VMA %x", start);
+	else
+	{	mapping = vcioa_find_mapping(vca, vma->vm_start);
+		if (unlikely(!mapping))
+			vcio_pr_warn("Tried to remove unknown memory mapping %lx to address %x", vma->vm_start, start);
+		else
+			*mapping = VCIOA_LOCATION_NONE;
+		if (vca->Handle & 0x80000000) // release automatic memory allocation
+			vcioa_release_mem(&data->Allocations, vca);
+	}
+	mutex_unlock(&data->Lock);
+}
+
 static const struct vm_operations_struct vm_ops = {
-/*.open =  simple_vma_open,
-  .close = simple_vma_close,*/
-#ifdef CONFIG_HAVE_IOREMAP_PROT
-	.access = generic_access_phys
-#endif
+	.close = vma_close
 };
 
+/** Implementation of mmap handler */
 static int device_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	vcio_data* data = file->private_data;
-	unsigned size = vma->vm_end - vma->vm_start;
+	vcio_data* const data = file->private_data;
+	uint32_t size = (uint32_t)(vma->vm_end - vma->vm_start);
 	int rc;
+	uint32_t start;
+	vcio_alloc* vca;
+	unsigned long* mapping;
+	vcio_pr_debug("%s(%p, %p{%lx,%lx,%lx,%p})", __func__, file, vma, vma->vm_start, vma->vm_end, vma->vm_pgoff, vma->vm_file);
+
+	data->Allocations.MM = vma->vm_mm; // remember for later use at cleanup
 
 	/* we only support shared mappings. Copy on write mappings are
 	 rejected here. A shared mapping that is writeable must have the
 	 shared flag set. */
-	if ((vma->vm_flags & VM_WRITE) && !(vma->vm_flags & VM_SHARED))
-	{	vcio_pr_info("writeable mappings must be shared, rejecting");
+	if (unlikely((vma->vm_flags & VM_WRITE) && !(vma->vm_flags & VM_SHARED)))
+	{	vcio_pr_info("Writable mappings must be shared, rejecting");
 		return -EINVAL;
 	}
 
-	if (data)
-	{
-		vcio_alloc* vca;
-		// Accept bus address as well. Won't work on Pi 4, but this one has no VideoCore IV anyway.
-		unsigned start = (vma->vm_pgoff << PAGE_SHIFT) & VC_MEM_TO_ARM_ADDR_MASK;
+	if (vma->vm_pgoff)
+	{	// Accept bus address as well. Won't work on Pi 4, but this one has no VideoCore IV anyway.
+		vma->vm_pgoff &= VC_MEM_TO_ARM_ADDR_MASK >> PAGE_SHIFT;
+		start = vma->vm_pgoff << PAGE_SHIFT;
 		// Allow RPi1 memory alias without VC4 cache.
 		if (vcio_model1)
 			start &= ~0x20000000;
@@ -927,35 +855,70 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 		mutex_lock(&data->Lock);
 
 		vca = vcioa_find_addr(&data->Allocations, start);
-		if (vca == NULL)
-		{
-			mutex_unlock(&data->Lock);
-			vcio_pr_info("tried to map memory (%x) that is not allocated by this device.", start);
+		if (unlikely(vca == NULL))
+		{	mutex_unlock(&data->Lock);
+			vcio_pr_info("Tried to map memory (%x) that is not allocated by this device.", start);
 			return -EACCES;
 		}
-		if (((start + size -1) >> PAGE_SHIFT) > ((vca->Location + vca->Size -1) >> PAGE_SHIFT))
-		{
-			vcio_pr_info("the memory region to map exceeds the allocated buffer (%x[%x] vs. %x[%x]).",
-				start, size, vca->Location, vca->Size);
+		if (unlikely(((start + size - 1) & PAGE_MASK) > ((vca->Location + vca->Size - 1) & (VC_MEM_TO_ARM_ADDR_MASK & PAGE_MASK))))
+		{	vcio_pr_info("The memory region to map exceeds the allocated buffer (%x[%x] vs. %x[%x]).", start, size, vca->Location, vca->Size);
 			mutex_unlock(&data->Lock);
 			return -EACCES;
 		}
 
-		mutex_unlock(&data->Lock);
+		// remember mapping
+		mapping = vcioa_find_mapping(vca, VCIOA_LOCATION_NONE);
+		if (unlikely(mapping == NULL))
+		{	mutex_unlock(&data->Lock);
+			vcio_pr_info("Only %d mappings per allocated block (%x) supported.", sizeof vca->Mappings / sizeof *vca->Mappings, start);
+			return -ENOMEM;
+		}
+		*mapping = vma->vm_start;
+	}
+	else
+	{	// automatic memory allocation
+		vca = vcioa_alloc_mem(&data->Allocations, size, PAGE_SIZE, 4);
+		if (unlikely(!vca))
+			return -ENOMEM;
+		vca->Handle |= 0x80000000; // Automatic allocation tag
+		if (unlikely(vcioa_lock_mem(vca)))
+		{	vcioa_release_mem(&data->Allocations, vca);
+			return -ENOMEM;
+		}
+		vca->Mappings[2] = vma->vm_start;
+		start = vca->Location & VC_MEM_TO_ARM_ADDR_MASK;
+		vma->vm_pgoff = start >> PAGE_SHIFT;
+		if (vcio_model1)
+			vma->vm_pgoff |= 0x20000000 >> PAGE_SHIFT; // uncached on PI 1 as well
 	}
 
-	/*pr_debug(DRIVER_NAME ": device_mmap %lx, %lx, %lx, %x, %lx\n",
-	 vma->vm_start, vma->vm_end, vma->vm_pgoff, vma->vm_page_prot, vma->vm_flags);*/
+	mutex_unlock(&data->Lock);
 
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 	vma->vm_ops = &vm_ops;
 	/* Don't fork this mappings as this would create serious race conditions. */
-	vma->vm_flags |= VM_DONTCOPY;
+	vma->vm_flags |= VM_DONTCOPY|VM_PFNMAP;
 
 	rc = remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff, size, vma->vm_page_prot);
-	if (rc)
+	if (unlikely(rc))
 	{	vcio_pr_warn("remap page range failed with %d", rc);
+		// undo remember mapping
+		mutex_lock(&data->Lock);
+		vca = vcioa_find_addr(&data->Allocations, start);
+		mapping = vcioa_find_mapping(vca, vma->vm_start);
+		if (likely(mapping))
+		{	*mapping = VCIOA_LOCATION_NONE;
+			if (vca->Handle & 0x80000000) // undo automatic allocation?
+				vcioa_release_mem(&data->Allocations, vca);
+		}
+		mutex_unlock(&data->Lock);
 		return rc;
+	} else if (vca->Handle & 0x80000000)
+	{	// place start address into allocation
+		uint32_t* mp = memremap(start, sizeof(uint32_t), MEMREMAP_WT);
+		vcio_pr_debug("memremap %p", mp);
+		*mp = vca->Location;
+		memunmap(mp);
 	}
 
 	return 0;
@@ -963,13 +926,11 @@ static int device_mmap(struct file *file, struct vm_area_struct *vma)
 
 /* Module Declarations */
 
-/**
- * This structure will hold the functions to be called
+/** This structure will hold the functions to be called
  * when a process does something to the device we
  * created. Since a pointer to this structure is kept in
  * the devices table, it can't be local to
- * init_module. NULL is for unimplemented functions.
- */
+ * init_module. NULL is for unimplemented functions. */
 struct file_operations fops = {
 	.unlocked_ioctl = device_ioctl,
 	.open = device_open,
@@ -985,35 +946,35 @@ static int vcio_remove(struct platform_device *pdev)
 
 	mutex_destroy(&vcio_lock);
 
-	if (vcio_v3d_base)
+	if (likely(vcio_v3d_base))
 	{	iounmap(vcio_v3d_base);
 		vcio_v3d_base = NULL;
 	}
 
-	if (vcio_dev0 != NULL)
+	if (likely(vcio_dev0 != NULL))
 	{	device_destroy(vcio_class, vcio_dev0->devt);
 		vcio_dev0 = NULL;
 	}
-	if (vcio_dev1 != NULL)
+	if (likely(vcio_dev1 != NULL))
 	{	device_destroy(vcio_class, vcio_dev1->devt);
 		vcio_dev1 = NULL;
 	}
 
-	if (vcio_class != NULL)
+	if (likely(vcio_class != NULL))
 	{	class_destroy(vcio_class);
 		vcio_class = NULL;
 	}
 
-	if (vcio_cdev0.owner != NULL)
+	if (likely(vcio_cdev0.owner != NULL))
 	{	cdev_del(&vcio_cdev0);
 		memset(&vcio_cdev0, 0, sizeof vcio_cdev0);
 	}
-	if (vcio_cdev1.owner != NULL)
+	if (likely(vcio_cdev1.owner != NULL))
 	{	cdev_del(&vcio_cdev1);
 		memset(&vcio_cdev1, 0, sizeof vcio_cdev1);
 	}
 
-	if (vcio_dev)
+	if (likely(vcio_dev))
 	{	unregister_chrdev_region(vcio_dev, 2);
 		vcio_dev = 0;
 	}
@@ -1080,11 +1041,12 @@ static int vcio_probe(struct platform_device *pdev)
 		uint32_t revision = GetBoardRevision();
 		vcio_pr_debug("Board revision %x", revision);
 		vcio_model1 = !(revision & 0x800000) || !(revision & 0xf000);
+		//vcio_address_mask
 	}
 
 	{	// map I/O registers
 		vcio_v3d_base = ioremap(vcio_model1 ? 0x20c00000 : 0x3fc00000, 0x1000);
-		vcio_pr_debug("IO: %x", vcio_v3d_base);
+		vcio_pr_debug("IO: %p", vcio_v3d_base);
 		if (!vcio_v3d_base)
 		{	vcio_pr_err("Failed to map V3D register");
 			return -EBUSY;
