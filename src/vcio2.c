@@ -479,8 +479,6 @@ static int vcio_set_perf_count_enable(vcio_data* data, uint32_t counters)
 	if (!changed)
 		return 0;
 
-	vcio_set_enabled(data, 1);
-
 	mutex_lock(&vcio_lock);
 
 	free = vcio_v3d_base[V3D_PCTRE];
