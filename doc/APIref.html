@@ -1,16 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta http-equiv="content-type" content="text/html; charset=iso-8859-15">
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
     <title>vcio2 API Reference</title>
-    <meta content="Marcel M�ller" name="author">
+    <meta content="Marcel Müller" name="author">
     <link rel="stylesheet" href="infstyle.css" type="text/css">
   </head>
   <body>
     <h1>vcio2 API Reference</h1>
-    <p><a class="nobr" href="index.html">? Top</a>, <a class="nobr" href="#general">? General IOCTLs</a>, <a class="nobr" href="#memory">?
-        Memory allocation</a>, <a class="nobr" href="#execute">? Execute QPU code</a>, <a class="nobr" href="#perfcount">?
-        Performance counters</a>, <a class="nobr" href="guide.html">? Programming guide</a></p>
+    <p><a class="nobr" href="index.html">▲ Top</a>, <a class="nobr" href="#general">▼ General IOCTLs</a>, <a class="nobr" href="#memory">▼
+        Memory allocation</a>, <a class="nobr" href="#execute">▼ Execute QPU code</a>, <a class="nobr" href="#perfcount">▼
+        Performance counters</a>, <a class="nobr" href="guide.html">▶ Programming guide</a></p>
     <h2>Access vcio2 device</h2>
     <h3><a id="open" name="open"></a>open device</h3>
     <pre>int vcio2 = open("/dev/vcio2", O_RDWR);</pre>
@@ -55,12 +55,12 @@
       <dt><tt>in.alignment</tt></dt>
       <dd>Alignment of the resulting buffer in physical memory. 4096 (the page size) is strongly recommended.</dd>
       <dt><tt>in.flags</tt></dt>
-      <dd><tt>0xC</tt> ? cached; <tt>0x4</tt> ? direct<br>
+      <dd><tt>0xC</tt> ⇒ cached; <tt>0x4</tt> ⇒ direct<br>
         Other flags unknown. The parameter is directly passed to the <tt>VCMSG_SET_ALLOCATE_MEM</tt> mailbox message.</dd>
       <dt>return value</dt>
-      <dd><tt>0</tt> ? success<br>
-        <tt>ENOMEM</tt> ? cannot allocate the memory<br>
-        <tt>EFAULT</tt> ? failed to access provided data buffer</dd>
+      <dd><tt>0</tt> ⇒ success<br>
+          <tt></tt>ENOMEM</tt> ⇒ cannot allocate the memory<br>
+        <tt>EFAULT</tt> ⇒ failed to access provided data buffer</dd>
       <dt><tt>out.handle</tt></dt>
       <dd>Memory handle. To be used with <a href="#IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.</dd>
     </dl>
@@ -75,9 +75,9 @@
       <dt><tt>handle</tt></dt>
       <dd>Memory handle from <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>.</dd>
       <dt>return value</dt>
-      <dd><tt>0</tt> ? success<br>
-        <tt>EINVAL</tt> ? invalid memory handle<br>
-        <tt>ENOMEM</tt> ? firmware failed to release memory</dd>
+      <dd><tt>0</tt> ⇒ success<br>
+        <tt>EINVAL</tt> ⇒ invalid memory handle<br>
+        <tt>ENOMEM</tt> ⇒ firmware failed to release memory</dd>
     </dl>
     <h3><tt><a id="IOCTL_MEM_LOCK" name="IOCTL_MEM_LOCK"></a>IOCTL_MEM_LOCK (0xC004650d)</tt></h3>
     <pre>uint32_t addr = handle;<br>int retval = ioctl(vcio2, IOCTL_MEM_LOCK, &amp;addr);</pre>
@@ -86,10 +86,10 @@
       <dt><tt>handle</tt></dt>
       <dd>Memory handle from <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>.</dd>
       <dt>return value</dt>
-      <dd><tt>0</tt> ? success<br>
-        <tt>EINVAL</tt> ? invalid memory handle<br>
-        <tt>ENOMEM</tt> ? firmware failed to lock memory<br>
-        <tt>EFAULT</tt> ? failed to access provided data buffer</dd>
+      <dd><tt>0</tt> ⇒ success<br>
+        <tt>EINVAL</tt> ⇒ invalid memory handle<br>
+        <tt>ENOMEM</tt> ⇒ firmware failed to lock memory<br>
+        <tt>EFAULT</tt> ⇒ failed to access provided data buffer</dd>
       <dt><tt>addr</tt></dt>
       <dd>Physical memory address where the memory segment has been locked.</dd>
     </dl>
@@ -101,10 +101,10 @@
       <dt><tt>handle</tt></dt>
       <dd>Memory handle from <a href="#IOCTL_MEM_ALLOC"><tt>IOCTL_MEM_ALLOC</tt></a>.</dd>
       <dt>return value</dt>
-      <dd><tt>0</tt> ? success<br>
-        <tt>EINVAL</tt> ? invalid memory handle<br>
-        <tt>ENOMEM</tt> ? firmware failed to unlock memory<br>
-        <tt>EPERM</tt> ? tried to unlock memory that is not locked</dd>
+      <dd><tt>0</tt> ⇒ success<br>
+        <tt>EINVAL</tt> ⇒ invalid memory handle<br>
+        <tt>ENOMEM</tt> ⇒ firmware failed to unlock memory<br>
+        <tt>EPERM</tt> ⇒ tried to unlock memory that is not locked</dd>
     </dl>
     <p>Note that unlocking memory has the side effect of invalidation of all memory mappings that refer to this segment. vcio
       removes the corresponding PTEs from your process so you will get a bus error when you try to access a virtual address formerly
@@ -126,9 +126,9 @@
       <dt><tt>size</tt></dt>
       <dd>Size of the memory segment.</dd>
       <dt>return value</dt>
-      <dd><tt>0</tt> ? success<br>
-        <tt>EINVAL</tt> ? there is no memory block that matches all given criteria<br>
-        <tt>EFAULT</tt> ? failed to access provided data buffer</dd>
+      <dd><tt>0</tt> ⇒ success<br>
+        <tt>EINVAL</tt> ⇒ there is no memory block that matches all given criteria<br>
+        <tt>EFAULT</tt> ⇒ failed to access provided data buffer</dd>
     </dl>
     <p>All fields in <tt>vcio_mem_query</tt> are optional on input. Simply leave the unneeded fields zero. The driver will fill all
       missing values on successful return. At least one of <tt>handle</tt>, <tt>bus_addr</tt> or <tt>virt_addr</tt> should be
@@ -162,9 +162,9 @@
       </dd>
       <dt>return value <tt>mem</tt></dt>
       <dd>Virtual address of the mapped memory or <tt>MAP_FAILED</tt> on error. <tt>errno</tt> may be one of:<br>
-        <tt>EINVAL</tt> ? invalid flags<br>
-        <tt>EACCES</tt> ? tried to map memory that is not allocated by this device handle<br>
-        <tt>ENOMEM</tt> ? memory mapping failed</dd>
+        <tt>EINVAL</tt> ⇒ invalid flags<br>
+        <tt>EACCES</tt> ⇒ tried to map memory that is not allocated by this device handle<br>
+        <tt>ENOMEM</tt> ⇒ memory mapping failed</dd>
     </dl>
     <p>vcio2 validates the memory mappings. I.e. <em>you can only map memory that has been previously allocated with the same
         device handle</em>. Otherwise you get an <tt>EACCES</tt> error.</p>
@@ -183,8 +183,8 @@
       <dd>Number of bytes to allocate.</dd>
       <dt>return value <tt>mem</tt></dt>
       <dd>Virtual address of the mapped memory or <tt>MAP_FAILED</tt> on error. <tt>errno</tt> may be one of:<br>
-        <tt>EINVAL</tt> ? invalid flags<br>
-        <tt>ENOMEM</tt> ? out of memory or memory mapping failed</dd>
+        <tt>EINVAL</tt> ⇒ invalid flags<br>
+        <tt>ENOMEM</tt> ⇒ out of memory or memory mapping failed</dd>
     </dl>
     For uniforms you usually also need the <b>bus address</b> of the memory. To get this address simply read the <b>first <tt>uint32_t</tt>
       from the allocated memory</b>. It will always contain the bus address after an automatic allocation.
@@ -195,13 +195,13 @@
     <pre>int retval = ioctl(vcio2, IOCTL_ENABLE_GPU, flag);</pre>
     <dl>
       <dt><tt>flag</tt></dt>
-      <dd><tt>1</tt> ? power on the QPU<br>
-        <tt>0</tt> ? power off the QPU<br>
+      <dd><tt>1</tt> ⇒ power on the QPU<br>
+        <tt>0</tt> ⇒ power off the QPU<br>
         Note that the QPU may not really be powered off because another open handle to the vcio2 device might still request QPU
         power. Only when the last open instance of vcio2 committed the power off the QPU is actually turned off.</dd>
       <dt>return value</dt>
-      <dd><tt>0</tt> ? success<br>
-        <tt>ENODEV</tt> ? firmware failed to enable QPU</dd>
+      <dd><tt>0</tt> ⇒ success<br>
+        <tt>ENODEV</tt> ⇒ firmware failed to enable QPU</dd>
     </dl>
     <p>The QPU is automatically powered on at <tt>IOCTL_EXEC_QPU</tt> and automatically turned off when the last process closes the
       vcio2 device. So there is normally no need to call this IOCTL explicitly.</p>
@@ -231,10 +231,10 @@
       <dd>Timeout in milliseconds to wait for an host interrupt. If the timeout elapses the function returns with an error. Note
         that this will not stop the QPU code so far.</dd>
       <dt>return value</dt>
-      <dd><tt>0</tt> ? success<br>
-        <tt>EACCES</tt> ? some of the addresses passed do not belong to memory that is allocated by this device handle<br>
-        <tt>ENOEXEC</tt> ? execution of QPU code failed, probably a timeout<br>
-        <tt>EFAULT</tt> ? failed to access provided data buffer</dd>
+      <dd><tt>0</tt> ⇒ success<br>
+        <tt>EACCES</tt> ⇒ some of the addresses passed do not belong to memory that is allocated by this device handle<br>
+        <tt>ENOEXEC</tt> ⇒ execution of QPU code failed, probably a timeout<br>
+        <tt>EFAULT</tt> ⇒ failed to access provided data buffer</dd>
     </dl>
     <p>Although vcio2 does some basic checks to prevent accidental access to invalid memory <em>it cannot check for memory access
         done by the QPU code</em>. So you have to take care to execute only valid QPU code, otherwise the Raspberry might crash.
@@ -257,9 +257,9 @@
         <pre>V3D_PERF_COUNT_QPU_CYCLES_IDLE<br>V3D_PERF_COUNT_QPU_CYCLES_VERTEX_SHADING<br>V3D_PERF_COUNT_QPU_CYCLES_FRAGMENT_SHADING<br>V3D_PERF_COUNT_QPU_CYCLES_VALID_INSTRUCTIONS<br>V3D_PERF_COUNT_QPU_CYCLES_STALLED_TMU<br>V3D_PERF_COUNT_QPU_CYCLES_STALLED_SCOREBOARD<br>V3D_PERF_COUNT_QPU_CYCLES_STALLED_VARYINGS<br>V3D_PERF_COUNT_QPU_INSTRUCTION_CACHE_HITS<br>V3D_PERF_COUNT_QPU_INSTRUCTION_CACHE_MISSES<br>V3D_PERF_COUNT_QPU_UNIFORMS_CACHE_HITS<br>V3D_PERF_COUNT_QPU_UNIFORMS_CACHE_MISSES<br>V3D_PERF_COUNT_TMU_TEXTURE_QUADS_PROCESSED<br>V3D_PERF_COUNT_TMU_TEXTURE_CACHE_MISSES<br>V3D_PERF_COUNT_VPM_CYCLES_STALLED_VDW<br>V3D_PERF_COUNT_VPM_CYCLES_STALLED_VCD<br>V3D_PERF_COUNT_L2C_L2_CACHE_HITS<br>V3D_PERF_COUNT_L2C_L2_CACHE_MISSES</pre>
       </dd>
       <dt>return value</dt>
-      <dd><tt>0</tt> ? success<br>
-        <tt>EINVAL</tt> ? <tt>enabled</tt> contains a counter taht is not supported by vcio2<br>
-        <tt>EBUSY</tt> ? maximum number of concurrent performance counters exceeded</dd>
+      <dd><tt>0</tt> ⇒ success<br>
+        <tt>EINVAL</tt> ⇒ <tt>enabled</tt> contains a counter taht is not supported by vcio2<br>
+        <tt>EBUSY</tt> ⇒ maximum number of concurrent performance counters exceeded</dd>
     </dl>
     <p>Performance counters are a limited resource of VideoCore IV. <em>No more than 16 counters can be activated at the same time.</em><br>
       Furthermore vcio2 currently does not support switching enabled counters for individual QPU executions of different open driver
@@ -273,17 +273,17 @@
     <pre>uint32_t enabled;<br>int retval = ioctl(vcio2, IOCTL_GET_V3D_PERF_COUNT, &amp;enabled);</pre>
     <dl>
       <dt>return value</dt>
-      <dd><tt>0</tt> ? success<br>
-        <tt>EFAULT</tt> ? failed to access provided data buffer</dd>
+      <dd><tt>0</tt> ⇒ success<br>
+        <tt>EFAULT</tt> ⇒ failed to access provided data buffer</dd>
     </dl>
     <h3><tt><a name="IOCTL_READ_V3D_PERF_COUNT" id="IOCTL_READ_V3D_PERF_COUNT"></a>IOCTL_READ_V3D_PERF_COUNT (0x804065c2)</tt></h3>
     <p>Read all enabled performance counters.</p>
     <pre>uint32_t counters[16];<br>int retval = ioctl(vcio2, IOCTL_GET_V3D_PERF_COUNT, &amp;counters);</pre>
     <dl>
       <dt>return value</dt>
-      <dd><tt>0</tt> ? success<br>
-        <tt>ENODATA</tt> ? performance counters are not enabled for this device handle<br>
-        <tt>EFAULT</tt> ? failed to access provided data buffer</dd>
+      <dd><tt>0</tt> ⇒ success<br>
+        <tt>ENODATA</tt> ⇒ performance counters are not enabled for this device handle<br>
+        <tt>EFAULT</tt> ⇒ failed to access provided data buffer</dd>
     </dl>
     <p>The counter values are returned in ascending order and disabled counters will not have an empty slot. E.g. if you enabled <tt>V3D_PERF_COUNT_QPU_INSTRUCTION_CACHE_HITS|V3D_PERF_COUNT_L2C_L2_CACHE_HITS|V3D_PERF_COUNT_VPM_CYCLES_STALLED_VDW</tt>
       then you will receive exactly 3 values: <tt>V3D_PERF_COUNT_QPU_INSTRUCTION_CACHE_HITS</tt> in <tt>counters[0]</tt>, <tt>V3D_PERF_COUNT_VPM_CYCLES_STALLED_VDW</tt>
