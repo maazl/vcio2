@@ -37,7 +37,7 @@
       <li>Enable and disable the GPU automatically.</li>
       <li>Read performance counters.</li>
       <li>Some protection against invalid memory access.</li>
-      <li><b>Supports</b> Raspberry Pi models: <b>RPi 1, RPi 2, RPi 3</b> (all variants)</li>
+      <li><b>Supports</b> Raspberry Pi models: <b>RPi 1, RPi 2, RPi 3, RPi Zero</b> (all variants)</li>
     </ul>
     <h3>Limitations</h3>
     <ul>
@@ -54,9 +54,6 @@
     </ul>
     <h3>TODOs, known problems</h3>
     <ul>
-      <li><b>Running hello_fft with small batch size </b><b><i>without</i> the vcio2 driver</b> (i.e. direct V3D register access) <b>but
-          <i>after</i> vcio2 has run at least one QPU batch leaves the QPU in an unusable state</b>. Typically QPU interrupts do no
-        longer fire and all user shaders get disabled by <tt>V3D_SQRSV</tt> registers. Reason unknown, maybe a firmware bug.</li>
       <li>Power off the QPU after execution timeouts for better error recovery.</li>
     </ul>
     <h2><a name="install"></a>Installation instructions</h2>

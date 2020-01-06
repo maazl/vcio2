@@ -190,6 +190,7 @@ static uint32_t QpuEnable(unsigned enable)
 	/* property message to VCIO channel */
 	tag.tagId = RPI_FIRMWARE_SET_ENABLE_QPU;
 	tag.dataSize = tag.bufSize = 4;
+	tag.enable = enable;
 
 	s = mailbox_property(tag);
 
