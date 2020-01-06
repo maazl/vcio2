@@ -59,7 +59,8 @@
         Other flags unknown. The parameter is directly passed to the <tt>VCMSG_SET_ALLOCATE_MEM</tt> mailbox message.</dd>
       <dt>return value</dt>
       <dd><tt>0</tt> ⇒ success<br>
-          <tt></tt>ENOMEM</tt> ⇒ cannot allocate the memory<br>
+        <tt>EINVAL</tt> ⇒ some of the parameters are out of range<br>
+        <tt>ENOMEM</tt> ⇒ cannot allocate the memory<br>
         <tt>EFAULT</tt> ⇒ failed to access provided data buffer</dd>
       <dt><tt>out.handle</tt></dt>
       <dd>Memory handle. To be used with <a href="#IOCTL_MEM_LOCK"><tt>IOCTL_MEM_LOCK</tt></a>.</dd>
@@ -211,12 +212,10 @@
 { unsigned int uniforms;
   unsigned int code;
 } vcio_exec_qpu_entry;<br>typedef struct
-{ struct
-  { unsigned int num_qpus;
-    unsigned int control;
-    unsigned int noflush;
-    unsigned int timeout;
-  } in;
+{ unsigned int num_qpus;
+  unsigned int control;
+  unsigned int noflush;
+  unsigned int timeout;
 } vcio_exec_qpu;<br><br>vcio_exec_qpu buf;<br>...<br>int retval = ioctl(vcio2, IOCTL_EXEC_QPU, &amp;buf);</pre>
     <dl>
       <dt><tt>num_qpus</tt></dt>
@@ -232,6 +231,7 @@
         that this will not stop the QPU code so far.</dd>
       <dt>return value</dt>
       <dd><tt>0</tt> ⇒ success<br>
+        <tt>EINVAL</tt> ⇒ some of the parameters are out of range<br>
         <tt>EACCES</tt> ⇒ some of the addresses passed do not belong to memory that is allocated by this device handle<br>
         <tt>ENOEXEC</tt> ⇒ execution of QPU code failed, probably a timeout<br>
         <tt>EFAULT</tt> ⇒ failed to access provided data buffer</dd>

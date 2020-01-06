@@ -628,7 +628,6 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				 */
 				mbox_copy_from_user(&size, (void *)ioctl_param, sizeof size);
 				return bcm_mailbox_property((void *)ioctl_param, size);
-				return 0;
 			}
 #endif
 		case 1: // new vcio2 device /with/ memory checking and leak prevention.
@@ -654,8 +653,11 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 					vcio_alloc* ap;
 					if (unlikely(copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in)))
 						goto mem_fault;
-					ap = vcioa_alloc_mem(&data->Allocations, p.in.size, p.in.alignment, p.in.flags);
-					if (unlikely(!ap))
+					if (unlikely((p.in.size & 0xe0000000) // too large
+						|| (p.in.alignment & (p.in.alignment - 1)) // invalid alignment
+						|| (p.in.flags & ~0xc)))
+						rc = -EINVAL;
+					else if (unlikely(!(ap = vcioa_alloc_mem(&data->Allocations, p.in.size, p.in.alignment, p.in.flags))))
 						rc = -ENOMEM;
 					else
 					{	p.out.handle = ap->Handle;
@@ -730,8 +732,10 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 					if (unlikely(copy_from_user(&p, (void*)ioctl_param, sizeof p)))
 						goto mem_fault;
 					vcio_pr_debug("IOCTL_EXEC_QPU %x, %x, %x, %x", p.num_qpus, p.control, p.noflush, p.timeout);
+					if (unlikely(p.num_qpus > 12 || (p.timeout & 0xff000000)))
+						rc = -EINVAL;
 					/* verify starting point */
-					if (unlikely(!vcioa_find_addr(&data->Allocations, p.control & VC_MEM_TO_ARM_ADDR_MASK)))
+					else if (unlikely(!vcioa_find_addr(&data->Allocations, p.control & VC_MEM_TO_ARM_ADDR_MASK)))
 						rc = -EACCES;
 					else if (likely((rc = vcio_set_enabled(data, 1)) == 0))
 					{	/* TODO: verify starting points of code and uniforms too
@@ -739,9 +743,8 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 						{	if (!vcioa_find_addr(&data->Allocations, ))
 								goto exec_fail;
 						}*/
-
 						vcio_read_perf_count(data, -1);
-						if (unlikely(ExecuteQpu(p.num_qpus, p.control, p.noflush, p.timeout)))
+						if (unlikely(ExecuteQpu(p.num_qpus, p.control, !!p.noflush, p.timeout)))
 							rc = -ENOEXEC;
 						vcio_read_perf_count(data, 1);
 					}
