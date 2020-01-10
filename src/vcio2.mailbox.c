@@ -11,6 +11,7 @@
  */
 
 #define mailbox_property(tag) rpi_firmware_property_list(firmware, &tag, sizeof (tag));
+#define MBOX_CHAN_PROPERTY 8
 
 static uint32_t GetBoardRevision(void)
 {

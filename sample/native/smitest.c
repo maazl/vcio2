@@ -76,14 +76,14 @@ static const char pack[RES_COUNT2][8] =
 };
 
 struct GPU
-{	unsigned code[sizeof(shader) / sizeof(uint32_t)];
+{	unsigned bus_addr;
+	int      mb;
+	unsigned code[sizeof(shader) / sizeof(uint32_t)];
 	unsigned input[VEC_COUNT*2];
 	unsigned output[VEC_COUNT*RES_COUNT];
 	unsigned input2[(sizeof input2/sizeof *input2 + 0xf) & ~0xf];
 	unsigned output2[((sizeof input2/sizeof *input2 + 0xf) & ~0xf) * RES_COUNT2];
 	unsigned unif[6];
-	unsigned mail[2];
-	int      mb;
 };
 
 static int gpu_prepare(volatile struct GPU** gpu)
@@ -102,21 +102,20 @@ static int gpu_prepare(volatile struct GPU** gpu)
 	}
 
 	ptr->mb = mb;
-	ptr->mail[0] = (ptr->mail[1] = *(unsigned*)ptr) + offsetof(struct GPU, unif);
-
 	*gpu = ptr;
 	return 0;
 }
 
 static unsigned gpu_execute(volatile struct GPU *gpu)
 {
-	vcio_exec_qpu buf =
-	{	1 /* 1 QPU */,
-		gpu->mail[1] + offsetof(struct GPU, mail),
-		1 /* no flush */,
-		5000 /* timeout */
+	struct vcio_exec_qpu2 buf =
+	{	5000, // timeout
+		1, // no flush
+		{	{	gpu->bus_addr + offsetof(struct GPU, unif),
+				gpu->bus_addr + offsetof(struct GPU, code)
+		}	}
 	};
-	int ret_val = ioctl(gpu->mb, IOCTL_EXEC_QPU, &buf);
+	int ret_val = ioctl(gpu->mb, IOCTL_EXEC_QPU2(1), &buf);
 	if (ret_val)
 		printf("execute_qpu failed: %d\n", ret_val);
 	return ret_val;
@@ -138,11 +137,11 @@ int main()
 	memcpy((void*)gpu->code, shader, sizeof gpu->code);
 
 	gpu->unif[0] = VEC_COUNT/16;
-	gpu->unif[1] = gpu->mail[1] + offsetof(struct GPU, input);
-	gpu->unif[2] = gpu->mail[1] + offsetof(struct GPU, output);
+	gpu->unif[1] = gpu->bus_addr + offsetof(struct GPU, input);
+	gpu->unif[2] = gpu->bus_addr + offsetof(struct GPU, output);
 	gpu->unif[3] = (sizeof input2/sizeof *input2 + 0xf) / 16;
-	gpu->unif[4] = gpu->mail[1] + offsetof(struct GPU, input2);
-	gpu->unif[5] = gpu->mail[1] + offsetof(struct GPU, output2);
+	gpu->unif[4] = gpu->bus_addr + offsetof(struct GPU, input2);
+	gpu->unif[5] = gpu->bus_addr + offsetof(struct GPU, output2);
 
 	memcpy((void*)gpu->input, input, sizeof gpu->input);
 	memset((void*)gpu->output, 0xbb, sizeof gpu->output);

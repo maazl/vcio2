@@ -36,8 +36,9 @@
 #define IOCTL_GET_VCIO_VERSION _IO(IOCTL_VCIO2_TYPE, 0xc0)
 
 /** Allocate VC memory */
-#define IOCTL_MEM_ALLOCATE _IOWR(IOCTL_VCIO2_TYPE, 0x0c, vcio_mem_allocate)
-typedef struct
+#define IOCTL_MEM_ALLOCATE _IOWR(IOCTL_VCIO2_TYPE, 0x0c, struct vcio_mem_allocate)
+/** IOCTL structure for IOCTL_MEM_ALLOCATE */
+struct vcio_mem_allocate
 {	union {
 		struct
 		{	uint32_t size;       /**< Number of bytes to allocate */
@@ -48,7 +49,7 @@ typedef struct
 		{	uint32_t handle;     /**< QPU memory handle */
 		} out;                 /**< IOCTL return data */
 	};
-} vcio_mem_allocate;       /**< IOCTL structure for IOCTL_MEM_ALLOCATE */
+};
 
 /** Allocate uncached, page aligned GPU memory.
  * @param handle File handle of the vcio2 device.
@@ -71,31 +72,53 @@ typedef struct
  * IOCTL param: unsigned handle of memory from IOCTL_MEM_ALLOCATE. */
 #define IOCTL_MEM_UNLOCK   _IO(IOCTL_VCIO2_TYPE, 0x0e)
 
-/// Query information about memory location
-#define IOCTL_MEM_QUERY    _IOWR(IOCTL_VCIO2_TYPE, 0x8f, vcio_mem_query)
-typedef struct
+/** Query information about memory location */
+#define IOCTL_MEM_QUERY    _IOWR(IOCTL_VCIO2_TYPE, 0x8f, struct vcio_mem_query)
+/** IOCTL structure for IOCTL_MEM_QUERY */
+struct vcio_mem_query
 { uint32_t handle;         /**< Handle of the memory allocation */
   uint32_t bus_addr;       /**< Bus address of memory block */
   void*    virt_addr;      /**< Virtual address of the memory block in user space */
   uint32_t size;           /**< Size of the memory block */
-} vcio_mem_query;          /**< IOCTL structure for IOCTL_MEM_QUERY */
+};
 
 /** Enable QPU power
  * IOCTL param: unsigned flag whether to enable or disable the QPU */
 #define IOCTL_ENABLE_QPU   _IO(IOCTL_VCIO2_TYPE, 0x12)
 
 /** Execute QPU code */
-#define IOCTL_EXEC_QPU     _IOW(IOCTL_VCIO2_TYPE, 0x11, vcio_exec_qpu)
-typedef struct
+#define IOCTL_EXEC_QPU     _IOW(IOCTL_VCIO2_TYPE, 0x11, struct vcio_exec_qpu)
+/** Startup data for one QPU */
+struct vcio_exec_qpu_entry
 {	uint32_t uniforms;       /**< Bus address of start of uniforms for one QPU */
 	uint32_t code;           /**< Bus address of start of code for one QPU */
-} vcio_exec_qpu_entry;     /**< Startup data for one QPU */
-typedef struct
+};
+/** IOCTL structure for IOCTL_EXEC_QPU */
+struct vcio_exec_qpu
 {	uint32_t num_qpus;       /**< Number of QPUs to use */
 	uint32_t control;        /**< Bus address of array of vcio_exec_qpu_entry with num_qpus elements */
 	uint32_t noflush;        /**< 1 => do not flush L2 cache */
 	uint32_t timeout;        /**< Timeout in ms */
-} vcio_exec_qpu;           /**< IOCTL structure for IOCTL_EXEC_QPU */
+};
+
+/** Execute QPU code QPU
+ * @param num_qpus Number of QPUs to use. Valid range [1,12] */
+#define IOCTL_EXEC_QPU2(num_qpus) _IOC(_IOC_WRITE, IOCTL_VCIO2_TYPE, 0x91, offsetof(struct vcio_exec_qpu2, control) + num_qpus * sizeof(struct vcio_exec_qpu_entry))
+/** IOCTL structure for IOCTL_EXEC_QPU2 */
+#ifdef __cplusplus
+template <unsigned NUM_QPUS>
+#else
+#define NUM_QPUS 12
+#endif
+struct vcio_exec_qpu2
+{	uint32_t timeout;        /**< Timeout in ms */
+	uint32_t noflush;        /**< 1 => do not flush L2 cache */
+	/** Array with starting points for the QPUs.
+	 * Unused entries may may not even exist - see num_qpus parameter of IOCTL_EXEC_QPU2.
+	 * Any entry beyond num_qpus is not accessed by the driver. So this array is of dynamic length. */
+	struct vcio_exec_qpu_entry control[NUM_QPUS];
+};
+#undef NUM_QPUS
 
 /** Enable performance counters
  * IOCTL param: Bit vector of counters to enable for this instance.

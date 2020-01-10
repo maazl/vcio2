@@ -109,7 +109,7 @@ static int mbox_property(int file_desc, void *buf)
 uint32_t mem_alloc(int file_desc, uint32_t size, uint32_t align, uint32_t flags)
 {
 	if (have_vcio2)
-	{	vcio_mem_allocate buf;
+	{	struct vcio_mem_allocate buf;
 		int ret_val;
 
 		buf.in.size = size;
@@ -232,7 +232,7 @@ uint32_t qpu_enable(int file_desc, uint32_t enable)
 uint32_t execute_qpu(int file_desc, uint32_t num_qpus, uint32_t control, uint32_t noflush, uint32_t timeout)
 {
 	if (have_vcio2)
-	{	vcio_exec_qpu buf;
+	{	struct vcio_exec_qpu buf;
 		int ret_val;
 
 		buf.num_qpus = num_qpus;

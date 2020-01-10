@@ -18,11 +18,12 @@
       <li>Place the shader code, the uniforms and the control blocks into the allocated GPU memory. Don't forget that the GPU only
         accepts bus addresses and cannot access the applications memory.<br>
         <small>Although the GPU can access all physical memory there is no reasonable way to use application memory directly, since
-          it may be fragmented in physical memory and the GPU cannot use scatter gather lists.</small></li>
-      <li>Run your code on the GPU with <a href="APIref.html#IOCTL_EXEC_QPU"><tt>IOCTL_EXEC_QPU</tt></a>.<br>
+          it may be fragmented in physical memory and the GPU does not support scatter gather lists.</small></li>
+      <li>Run your code on the GPU with <a href="APIref.html#IOCTL_EXEC_QPU2"><tt>IOCTL_EXEC_QPU2</tt></a>.<br>
         Use an appropriate timeout. This will recover from GPU crashes in most cases.</li>
       <li>Repeat the last two steps as needed.</li>
-      <li>Close the device when you don't need it anymore. This releases all GPU memory allocated by this handle.</li>
+      <li>Close the device when you don't need it anymore. This releases all GPU memory allocated by this handle and powers off the
+        GPU if no longer needed.</li>
     </ol>
     <p>See <a href="#sample">sample program</a> for further details.</p>
     <p>See also <a href="http://www.maazl.de/project/vc4asm/doc/">vc4asm</a> for a powerful and free QPU macro assembler.</p>
@@ -66,7 +67,8 @@
     <h3>Variants</h3>
     <dl>
       <dt><tt><b>native</b></tt></dt>
-      <dd>This is the simplest way to use the vcio2 driver. This is <em>recommended for new developments</em> that depend on vcio2.</dd>
+      <dd>This is <b>the simplest</b> way to use the vcio2 driver. This is <em>recommended for new developments</em> that depend
+        on vcio2.</dd>
       <dt><tt><b>porting</b></tt> </dt>
       <dd>
         <div>This is the sample application that uses an API closely to the mailbox API of hello_fft. It only routes the method

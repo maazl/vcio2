@@ -341,7 +341,7 @@ static uint32_t vcioa_release_mem(vcio_allocs* allocs, vcio_alloc* vca)
  * @param query
  * @return 0: success, EINVAL: no valid range
  */
-static int vcioa_query_mem(vcio_allocs* allocs, vcio_mem_query* query)
+static int vcioa_query_mem(vcio_allocs* allocs, struct vcio_mem_query* query)
 {	vcio_alloc* vca;
 	vcio_pr_debug("%s(%p, {%x,%x,%p,%x})", __func__, allocs, query->handle, query->bus_addr, query->virt_addr, query->size);
 
@@ -647,7 +647,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 					break;
 
 				case IOCTL_MEM_ALLOCATE:
-				{	vcio_mem_allocate p;
+				{	struct vcio_mem_allocate p;
 					vcio_alloc* ap;
 					if (unlikely(copy_from_user(&p.in, (void*)ioctl_param, sizeof p.in)))
 						goto mem_fault;
@@ -710,7 +710,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				}
 
 				case IOCTL_MEM_QUERY:
-				{	vcio_mem_query q;
+				{	struct vcio_mem_query q;
 					if (unlikely(copy_from_user(&q, (void*)ioctl_param, sizeof q)))
 						goto mem_fault;
 					rc = vcioa_query_mem(&data->Allocations, &q);
@@ -726,7 +726,7 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 				}
 
 				case IOCTL_EXEC_QPU:
-				{	vcio_exec_qpu p;
+				{	struct vcio_exec_qpu p;
 					if (unlikely(copy_from_user(&p, (void*)ioctl_param, sizeof p)))
 						goto mem_fault;
 					vcio_pr_debug("IOCTL_EXEC_QPU %x, %x, %x, %x", p.num_qpus, p.control, p.noflush, p.timeout);
@@ -746,6 +746,79 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 							rc = -ENOEXEC;
 						vcio_read_perf_count(data, 1);
 					}
+					break;
+				}
+
+				case IOCTL_EXEC_QPU2(1):
+				case IOCTL_EXEC_QPU2(2):
+				case IOCTL_EXEC_QPU2(3):
+				case IOCTL_EXEC_QPU2(4):
+				case IOCTL_EXEC_QPU2(5):
+				case IOCTL_EXEC_QPU2(6):
+				case IOCTL_EXEC_QPU2(7):
+				case IOCTL_EXEC_QPU2(8):
+				case IOCTL_EXEC_QPU2(9):
+				case IOCTL_EXEC_QPU2(10):
+				case IOCTL_EXEC_QPU2(11):
+				case IOCTL_EXEC_QPU2(12):
+				{	dma_addr_t bus_addr;
+					struct mem
+					{	u32 size;
+						u32 status;
+						struct
+						{	struct rpi_firmware_property_tag_header hdr;
+							struct
+							{	u32 num_qpus;
+								u32 control;
+								u32 noflush;
+								u32 timeout;
+							} data;
+						} tag;
+						u32 end_tag;
+						// end of message here
+						struct vcio_exec_qpu_entry control_data[12];
+					}* buf;
+
+					rc = vcio_set_enabled(data, 1);
+					if (unlikely(rc))
+						break;
+
+					buf = dma_alloc_coherent(vcio_dev1, PAGE_ALIGN(sizeof *buf), &bus_addr, GFP_ATOMIC);
+					if (unlikely(!buf))
+					{	rc = -ENOMEM;
+						break;
+					}
+					buf->size = offsetof(struct mem, control_data);
+					buf->status = RPI_FIRMWARE_STATUS_REQUEST;
+					buf->tag.hdr.tag = RPI_FIRMWARE_EXECUTE_QPU;
+					buf->tag.hdr.req_resp_size = buf->tag.hdr.buf_size = sizeof buf->tag.data;
+					buf->tag.data.num_qpus = _IOC_SIZE(ioctl_num);
+					buf->tag.data.control = bus_addr | (offsetof(struct mem, control_data) | 0x40000000);
+					// vcio_exec_qpu2 is mostly binary compatible to the tail of struct mem above.
+					if (unlikely(copy_from_user(&buf->tag.data.timeout, (void*)ioctl_param, buf->tag.data.num_qpus)))
+					{	rc = -EFAULT;
+						goto exec2_done;
+					}
+					buf->tag.data.num_qpus -= offsetof(struct vcio_exec_qpu2, control) >>= ilog2(sizeof(struct vcio_exec_qpu_entry));
+					buf->tag.data.noflush = !!buf->end_tag; // move noflush in place
+					buf->end_tag = RPI_FIRMWARE_PROPERTY_END;
+					vcio_pr_debug("IOCTL_EXEC_QPU2 %x, %x, %x, %x", buf->tag.data.num_qpus, buf->tag.data.control, buf->tag.data.noflush, buf->tag.data.timeout);
+
+					if (unlikely(buf->tag.data.timeout & 0xff000000))
+					{	rc = -EINVAL;
+						goto exec2_done;
+					}
+
+					vcio_read_perf_count(data, -1);
+					wmb();
+					rc = rpi_firmware_transaction(firmware, MBOX_CHAN_PROPERTY, bus_addr);
+					rmb();
+					vcio_read_perf_count(data, 1);
+
+					if (unlikely(rc == 0 && buf->status != RPI_FIRMWARE_STATUS_SUCCESS))
+						rc = -EINVAL;
+				exec2_done:
+					dma_free_coherent(vcio_dev1, PAGE_SIZE, buf, bus_addr);
 					break;
 				}
 
@@ -1102,6 +1175,8 @@ static int vcio_probe(struct platform_device *pdev)
 		vcio_dev1 = NULL;
 		goto fail;
 	}
+
+	dma_set_coherent_mask(vcio_dev1, DMA_BIT_MASK(32));
 
 	mutex_init(&vcio_lock);
 	/* succeeded! */

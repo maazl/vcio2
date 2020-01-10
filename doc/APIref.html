@@ -36,7 +36,7 @@
     <h2><a name="memory" id="memory"></a>GPU memory allocation</h2>
     <h3><tt><a id="IOCTL_MEM_ALLOC" name="IOCTL_MEM_ALLOC"></a>IOCTL_MEM_ALLOCATE (0xC00C650c)</tt></h3>
     <p>Allocate GPU memory. The memory is continuous in physical address and taken from the reserved GPU memory pool.</p>
-    <pre>typedef struct
+    <pre>typedef struct  // declared in vcio.h
 { union {
     struct
     { unsigned int size;
@@ -114,7 +114,7 @@
     </dl>
     <h3><tt><a name="IOCTL_MEM_QUERY" id="IOCTL_MEM_QUERY"></a>IOCTL_MEM_QUERY (0xc0010658f)</tt></h3>
     <p>Query information about a memory allocation.</p>
-    <pre>typedef struct
+    <pre>typedef struct  // declared in vcio.h
 { unint32_t handle;<br>  unint32_t bus_addr;<br>  void*     virt_addr;<br>  unint32_t size;
 } vcio_mem_query;<br><br>vcio_mem_query buf;<br>...<br>int retval = ioctl(vcio2, IOCTL_MEM_QUERY, &amp;buf);</pre>
     <dl>
@@ -191,6 +191,13 @@
       from the allocated memory</b>. It will always contain the bus address after an automatic allocation.
     <p>The memory allocated this way is released as soon as you call <tt>unmap</tt>.</p>
     <h2><a name="execute" id="execute"></a>QPU code execution</h2>
+    <p>Although vcio2 does some basic checks to prevent accidental access to invalid memory <em>it cannot check for memory access
+        done by the QPU code</em>. So you have to take care to execute only valid QPU code, otherwise the Raspberry might crash.
+      However, in most cases the RPi will recover from faults after the timeout and no resources will be lost. So GPU development is
+      significantly relaxed. </p>
+    <p>While QPU code is executing the Raspian kernel can no longer access the the property channel used for several other purposes,
+      e.g. power management or several firmware calls. Every attempt to do such a function is blocked until the QPU code raises an
+      host interrupt or the timeout elapsed. This is a restriction of the firmware rather than vcio2.</p>
     <h3><tt><a id="IOCTL_ENABLE_QPU" name="IOCTL_ENABLE_QPU"></a>IOCTL_ENABLE_QPU (0x00006512)</tt></h3>
     <p>Power on/off the GPU.</p>
     <pre>int retval = ioctl(vcio2, IOCTL_ENABLE_GPU, flag);</pre>
@@ -204,14 +211,15 @@
       <dd><tt>0</tt> ⇒ success<br>
         <tt>ENODEV</tt> ⇒ firmware failed to enable QPU</dd>
     </dl>
-    <p>The QPU is automatically powered on at <tt>IOCTL_EXEC_QPU</tt> and automatically turned off when the last process closes the
-      vcio2 device. So there is normally no need to call this IOCTL explicitly.</p>
-    <h3><tt><a id="IOCTL_EXEC_QPU" name="IOCTL_EXEC_QPU"></a>IOCTL_EXEC_QPU (0x40106511)</tt></h3>
-    <p>Execute QPU code.</p>
-    <pre>typedef struct
+    <p>The QPU is automatically powered on at <tt>IOCTL_EXEC_QPU</tt>/<tt>IOCTL_<a href="IOCTL_EXEC_QPU2">EXEC</a>_QPU2</tt> and
+      turned off when the last process closes the vcio2 device. So <em>there is normally no need to call this IOCTL explicitly.</em></p>
+    <h3><tt><a id="IOCTL_EXEC_QPU2" name="IOCTL_EXEC_QPU2"></a>IOCTL_EXEC_QPU (0x40106511)</tt></h3>
+    <p>Execute QPU code. This variant needs the code and uniform pointers i.e. the <tt>vcio_exec_qpu_entry</tt> structures to be
+      stored in GPU memory.</p>
+    <pre>typedef struct  // declared in vcio.h
 { unsigned int uniforms;
   unsigned int code;
-} vcio_exec_qpu_entry;<br>typedef struct
+} vcio_exec_qpu_entry;<br>typedef struct  // declared in vcio.h
 { unsigned int num_qpus;
   unsigned int control;
   unsigned int noflush;
@@ -219,16 +227,17 @@
 } vcio_exec_qpu;<br><br>vcio_exec_qpu buf;<br>...<br>int retval = ioctl(vcio2, IOCTL_EXEC_QPU, &amp;buf);</pre>
     <dl>
       <dt><tt>num_qpus</tt></dt>
-      <dd>Number of QPUs that should be kicked off. Each QPU receives their own shader code and their own set of uniforms. So this
-        is also the size of the <tt>control</tt> array.</dd>
+      <dd><b>Number of QPUs</b> to use. ∈ [1...12]<br>
+        Each QPU receives their own shader code and their own set of uniforms. So this is also the size of the <tt>control</tt>
+        array.</dd>
       <dt><tt>control</tt></dt>
-      <dd>Setup entries for each QPU containing the physical start address of the uniforms and the code. This is a <i>physical</i>
-        pointer to an array of <tt>vcio_qpu_entry</tt> structures with exactly <tt>num_qpus</tt> elements.</dd>
+      <dd>Setup entries for each QPU containing the physical start address of the uniforms and the code. This is a <b>bus_address</b>
+        of an array of <tt>vcio_qpu_entry</tt> structures with exactly <tt>num_qpus</tt> elements.</dd>
       <dt><tt>noflush</tt></dt>
-      <dd>Flag: do not flush the cache before starting the QPU code.</dd>
+      <dd>Flag: <b>do not flush the cache</b> before starting the QPU code.</dd>
       <dt><tt>timeout</tt></dt>
-      <dd>Timeout in milliseconds to wait for an host interrupt. If the timeout elapses the function returns with an error. Note
-        that this will not stop the QPU code so far.</dd>
+      <dd><b>Timeout</b> in milliseconds to wait for an host interrupt. If the timeout elapses the function returns with an error.
+        Note that this will not stop the QPU code so far.</dd>
       <dt>return value</dt>
       <dd><tt>0</tt> ⇒ success<br>
         <tt>EINVAL</tt> ⇒ some of the parameters are out of range<br>
@@ -236,13 +245,46 @@
         <tt>ENOEXEC</tt> ⇒ execution of QPU code failed, probably a timeout<br>
         <tt>EFAULT</tt> ⇒ failed to access provided data buffer</dd>
     </dl>
-    <p>Although vcio2 does some basic checks to prevent accidental access to invalid memory <em>it cannot check for memory access
-        done by the QPU code</em>. So you have to take care to execute only valid QPU code, otherwise the Raspberry might crash.
-      However, in most cases the Raspi will recover from faults after the timeout and no resources will be lost. So GPU development
-      is significantly relaxed.</p>
-    <p>While QPU code is executing the Raspian kernel can no longer access the the property channel used for several other purposes,
-      e.g. power management or several firmware calls. Every attempt to do such a function is blocked until the QPU code raises an
-      host interrupt or the timeout elapsed. This is a restriction of the firmware rather than vcio2.</p>
+    <p>If the QPU is not yet powered on, the power will be turned on automatically before this request. The power will not be turned
+      off afterwards unless the device is closed or you explicitly request it by <tt><a href="#IOCTL_ENABLE_QPU">IOCTL_ENABLE_QPU</a>
+        0</tt> and of course no other process needs QPU power.</p>
+    <h3><tt>IOCTL_EXEC_QPU2 (0x40sz6591)</tt></h3>
+    <p>Execute QPU code. This variant takes the code and uniform pointers i.e. the <tt>vcio_exec_qpu_entry</tt> structures directly
+      in the IOCTL data. This is simpler and slightly faster than placing them in GPU memory. </p>
+    <pre>struct vcio_exec_qpu_entry  // declared in vcio.h
+{ unsigned int uniforms;
+  unsigned int code;
+};<br>struct vcio_exec_qpu2  // declared in vcio.h
+{ unsigned int timeout;<br>  unsigned int noflush;
+  struct vcio_exec_qpu_entry control[12];
+};<br><br>struct vcio_exec_qpu2 buf;<br>...<br>int retval = ioctl(vcio2, IOCTL_EXEC_QPU2(num_qpus), &amp;buf);</pre>
+    <dl>
+      <dt><tt>num_qpus</tt></dt>
+      <dd><b>Number of QPUs</b> that should be kicked off. ∈ [1...12]<br>
+        Each QPU receives their own shader code and their own set of uniforms. So this is also the size of the <tt>control</tt>
+        array.<br>
+        <tt>num_qpus</tt> is in fact passed implicitly in the size filed of the IOCTL number.</dd>
+      <dt><tt>control</tt></dt>
+      <dd><b>Start of the uniforms and the code</b> for each QPU as bus address.<br>
+        Although the array is declared to contain 12 elements (the maximum) you can safely pass smaller structures. The driver will
+        not access memory beyond the number of bytes indicated by the <tt>sz</tt> field.<br>
+        If you are using a <b>C++</b> compiler <b><tt>struct vcio_exec_qpu2</tt>
+          is a template</b> taking <tt>num_qpus</tt> as template argument.</dd>
+      <dt><tt>noflush</tt></dt>
+      <dd>Flag: <b>do not flush the cache</b> before starting the QPU code.</dd>
+      <dt><tt>timeout</tt></dt>
+      <dd><b>Timeout</b> in milliseconds to wait for an host interrupt. If the timeout elapses the function returns with an error.
+        Note that this will not stop the QPU code so far.</dd>
+      <dt><tt>sz</tt></dt>
+      <dd>Size of the IOCTL data. It depends on the real size of the <tt>control</tt> array, i.e. on <tt>num_qpus</tt>.</dd>
+      <dt>return value</dt>
+      <dd><tt>0</tt> ⇒ success<br>
+        <tt>EINVAL</tt> ⇒ some of the parameters are out of range<br>
+        <tt>EACCES</tt> ⇒ some of the uniform or code addresses passed do not belong to memory that is allocated by this device
+        handle<br>
+        <tt>ENOEXEC</tt> ⇒ execution of QPU code failed, probably a timeout<br>
+        <tt>EFAULT</tt> ⇒ failed to access provided data buffer</dd>
+    </dl>
     <p>If the QPU is not yet powered on, the power will be turned on automatically before this request. The power will not be turned
       off afterwards unless the device is closed or you explicitly request it by <tt><a href="#IOCTL_ENABLE_QPU">IOCTL_ENABLE_QPU</a>
         0</tt> and of course no other process needs QPU power.</p>
