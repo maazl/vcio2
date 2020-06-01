@@ -799,7 +799,8 @@ static long device_ioctl(struct file *f,	/* see include/linux/fs.h */
 					{	rc = -EFAULT;
 						goto exec2_done;
 					}
-					buf->tag.data.num_qpus -= offsetof(struct vcio_exec_qpu2, control) >>= ilog2(sizeof(struct vcio_exec_qpu_entry));
+					buf->tag.data.num_qpus -= offsetof(struct vcio_exec_qpu2, control);
+					buf->tag.data.num_qpus >>= ilog2(sizeof(struct vcio_exec_qpu_entry));
 					buf->tag.data.noflush = !!buf->end_tag; // move noflush in place
 					buf->end_tag = RPI_FIRMWARE_PROPERTY_END;
 					vcio_pr_debug("IOCTL_EXEC_QPU2 %x, %x, %x, %x", buf->tag.data.num_qpus, buf->tag.data.control, buf->tag.data.noflush, buf->tag.data.timeout);
