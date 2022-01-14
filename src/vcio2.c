@@ -188,7 +188,11 @@ static uint32_t vcioa_unlock_mem(vcio_alloc* vca, struct mm_struct* mm)
 			if (*mp != VCIOA_LOCATION_NONE)
 			{	if (!have_sem)
 				{	have_sem = 1;
+					#ifdef USE_MMAP_LOCK
+					down_write(&mm->mmap_lock);
+					#else
 					down_write(&mm->mmap_sem);
+					#endif
 				}
 				vma = find_vma(mm, *mp);
 				vcio_pr_debug("find_vma(%lx): %p{%lx}", *mp, vma, vma ? vma->vm_start : 0);
@@ -200,7 +204,11 @@ static uint32_t vcioa_unlock_mem(vcio_alloc* vca, struct mm_struct* mm)
 		} while (++mp != mpe);
 	}
 	if (have_sem)
+		#ifdef USE_MMAP_LOCK
+		up_write(&mm->mmap_lock);
+		#else
 		up_write(&mm->mmap_sem);
+		#endif
 	rc = UnlockVcMemory(vca->Handle & 0x7fffffff);
 	if (likely(!rc))
 		vca->Location = VCIOA_LOCATION_NONE;
